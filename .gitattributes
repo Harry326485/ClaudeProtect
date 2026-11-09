@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Preserve patch bytes and the single-space prefix on empty context lines.
+*.patch -text -whitespace

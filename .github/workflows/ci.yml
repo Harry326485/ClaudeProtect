@@ -1,0 +1,31 @@
+name: Windows checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supervisor:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+      - name: Build supervisor and probe
+        shell: msys2 {0}
+        run: pwsh -NoProfile -File scripts/build.ps1
+      - name: Test settings
+        shell: msys2 {0}
+        run: pwsh -NoProfile -File scripts/test-settings.ps1
+      - name: Test process supervision
+        shell: msys2 {0}
+        run: pwsh -NoProfile -File scripts/test-supervisor.ps1 -SkipBuild

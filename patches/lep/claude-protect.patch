@@ -1,0 +1,700 @@
+ClaudeProtect integration changes for LocaleEmulatorPlus-Core
+Base commit: 0b11f533ef426ab5606e12f91acd4b1c2f7e6bad
+Modified for ClaudeProtect on 2026-10-29 and 2026-11-02.
+Changes retain the applicable upstream license terms. See THIRD_PARTY_NOTICES.md.
+
+diff --git a/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp b/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
+index 2ecb069d2be4860b8a32198fed1530ea4ef3d781..a18119025f374b54c59bdc36d4a1be11ba59de19 100644
+--- a/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
++++ b/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
+@@ -25,6 +25,105 @@ LANGID WINAPI LepGetUserDefaultUILanguage()
+     return (LANGID)LepGetGlobalData()->GetEnvironment()->LocaleId;
+ }
+ 
++UINT WINAPI LepGetACP()
++{
++    return LepGetGlobalData()->GetEnvironment()->AnsiCodePage;
++}
++
++UINT WINAPI LepGetOEMCP()
++{
++    return LepGetGlobalData()->GetEnvironment()->OemCodePage;
++}
++
++static BOOL WINAPI LepGetPreferredUILanguages(
++    DWORD Flags,
++    PULONG NumberOfLanguages,
++    PWSTR LanguagesBuffer,
++    PULONG BufferLength
++)
++{
++    constexpr DWORD MuiLanguageId = 0x4;
++    constexpr DWORD MuiLanguageName = 0x8;
++    constexpr LCTYPE LocaleSName = 0x0000005C;
++
++    PLepGlobalData GlobalData = LepGetGlobalData();
++    LCID LocaleId = GlobalData->GetEnvironment()->LocaleId;
++    WCHAR Name[LOCALE_NAME_MAX_LENGTH] = {};
++    if (GetLocaleInfoW(LocaleId, LocaleSName, Name, countof(Name)) == 0)
++        return FALSE;
++
++    WCHAR Id[5] = {};
++    PCWSTR Source = Name;
++    if ((Flags & MuiLanguageId) != 0)
++    {
++        static const WCHAR HexDigits[] = L"0123456789ABCDEF";
++        LANGID Language = LANGIDFROMLCID(LocaleId);
++        Id[0] = HexDigits[(Language >> 12) & 0xF];
++        Id[1] = HexDigits[(Language >> 8) & 0xF];
++        Id[2] = HexDigits[(Language >> 4) & 0xF];
++        Id[3] = HexDigits[Language & 0xF];
++        Id[4] = 0;
++        Source = Id;
++    }
++    else if ((Flags & MuiLanguageName) == 0 && Flags != 0)
++    {
++        return FALSE;
++    }
++
++    ULONG Length = (ULONG)StrLengthW(Source);
++    ULONG Required = Length + 2;
++    ULONG Capacity = BufferLength != nullptr ? *BufferLength : 0;
++    if (NumberOfLanguages != nullptr)
++        *NumberOfLanguages = 1;
++    if (BufferLength != nullptr)
++        *BufferLength = Required;
++    if (LanguagesBuffer == nullptr)
++        return TRUE;
++    if (Capacity < Required)
++    {
++        SetLastError(ERROR_INSUFFICIENT_BUFFER);
++        return FALSE;
++    }
++
++    CopyMemory(LanguagesBuffer, Source, Length * sizeof(WCHAR));
++    LanguagesBuffer[Length] = 0;
++    LanguagesBuffer[Length + 1] = 0;
++    return TRUE;
++}
++
++BOOL WINAPI LepGetUserPreferredUILanguages(
++    DWORD Flags,
++    PULONG NumberOfLanguages,
++    PWSTR LanguagesBuffer,
++    PULONG BufferLength
++)
++{
++    return LepGetPreferredUILanguages(Flags, NumberOfLanguages, LanguagesBuffer, BufferLength);
++}
++
++BOOL WINAPI LepGetSystemPreferredUILanguages(
++    DWORD Flags,
++    PULONG NumberOfLanguages,
++    PWSTR LanguagesBuffer,
++    PULONG BufferLength
++)
++{
++    return LepGetPreferredUILanguages(Flags, NumberOfLanguages, LanguagesBuffer, BufferLength);
++}
++
++BOOL WINAPI LepGetThreadPreferredUILanguages(
++    DWORD Flags,
++    PULONG NumberOfLanguages,
++    PWSTR LanguagesBuffer,
++    PULONG BufferLength
++)
++{
++    // KernelBase may serve this list from its private per-thread MUI cache
++    // without calling RtlGetThreadPreferredUILanguages with public flags.
++    // Cover the Win32 boundary as well, including merged user/system lists.
++    return LepGetPreferredUILanguages(Flags, NumberOfLanguages, LanguagesBuffer, BufferLength);
++}
++
+ NTSTATUS LepGlobalData::HackUserDefaultLCID(PVOID Kernel32)
+ {
+     LCID        Lcid;
+@@ -700,7 +799,7 @@ NTSTATUS LepGlobalData::HookKernel32Routines(PVOID Kernel32)
+ 
+     WriteLog(L"hook k32: %p", Status);
+ 
+-    if (GetEnvironment()->HookUILanguageMode == 1 &&
++    if (GetEnvironment()->HookUILanguageMode >= 1 &&
+         HookedModule != nullptr &&
+         RtlEqualUnicodeString(&HookedModule->BaseDllName, &USTR(L"KERNEL32.dll"), TRUE))
+     {
+@@ -721,6 +820,55 @@ NTSTATUS LepGlobalData::HookKernel32Routines(PVOID Kernel32)
+         FAIL_RETURN(Status);
+     }
+ 
++    {
++        PVOID AcpApi = GetRoutineAddress(Kernel32, "GetACP");
++        PVOID OemApi = GetRoutineAddress(Kernel32, "GetOEMCP");
++        if (AcpApi != nullptr && OemApi != nullptr)
++        {
++            Mp::PATCH_MEMORY_DATA Patches[] =
++            {
++                Mp::FunctionJumpVa(AcpApi, LepGetACP,
++                    &HookStub.StubGetACP, LEP_FUNCTION_JUMP_OP),
++                Mp::FunctionJumpVa(OemApi, LepGetOEMCP,
++                    &HookStub.StubGetOEMCP, LEP_FUNCTION_JUMP_OP),
++            };
++            Status = Mp::PatchMemory(Patches, countof(Patches));
++            WriteLog(L"hook Win32 code page APIs: %08X", Status);
++            FAIL_RETURN(Status);
++        }
++    }
++
++    if (GetEnvironment()->HookUILanguageMode == 2)
++    {
++        PVOID UserPreferred = GetRoutineAddress(Kernel32, "GetUserPreferredUILanguages");
++        PVOID SystemPreferred = GetRoutineAddress(Kernel32, "GetSystemPreferredUILanguages");
++        if (UserPreferred != nullptr && SystemPreferred != nullptr)
++        {
++            Mp::PATCH_MEMORY_DATA Patches[] =
++            {
++                Mp::FunctionJumpVa(UserPreferred, LepGetUserPreferredUILanguages,
++                    &HookStub.StubGetUserPreferredUILanguages, LEP_FUNCTION_JUMP_OP),
++                Mp::FunctionJumpVa(SystemPreferred, LepGetSystemPreferredUILanguages,
++                    &HookStub.StubGetSystemPreferredUILanguages, LEP_FUNCTION_JUMP_OP),
++            };
++            Status = Mp::PatchMemory(Patches, countof(Patches));
++            WriteLog(L"hook Win32 preferred UI languages: %08X", Status);
++            FAIL_RETURN(Status);
++        }
++        PVOID ThreadPreferred = GetRoutineAddress(Kernel32, "GetThreadPreferredUILanguages");
++        if (ThreadPreferred != nullptr)
++        {
++            Mp::PATCH_MEMORY_DATA Patches[] =
++            {
++                Mp::FunctionJumpVa(ThreadPreferred, LepGetThreadPreferredUILanguages,
++                    &HookStub.StubGetThreadPreferredUILanguages, LEP_FUNCTION_JUMP_OP),
++            };
++            Status = Mp::PatchMemory(Patches, countof(Patches));
++            WriteLog(L"hook Win32 thread preferred UI languages: %08X", Status);
++            FAIL_RETURN(Status);
++        }
++    }
++
+     return Status;
+ }
+ 
+@@ -728,5 +876,10 @@ NTSTATUS LepGlobalData::UnHookKernel32Routines()
+ {
+     Mp::RestoreMemory(HookStub.StubGetSystemDefaultUILanguage);
+     Mp::RestoreMemory(HookStub.StubGetUserDefaultUILanguage);
++    Mp::RestoreMemory(HookStub.StubGetACP);
++    Mp::RestoreMemory(HookStub.StubGetOEMCP);
++    Mp::RestoreMemory(HookStub.StubGetUserPreferredUILanguages);
++    Mp::RestoreMemory(HookStub.StubGetSystemPreferredUILanguages);
++    Mp::RestoreMemory(HookStub.StubGetThreadPreferredUILanguages);
+     return 0;
+ }
+diff --git a/LocaleEmulatorPlus/Hooks/NtdllHook.cpp b/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
+index 46a533bca740c5e1e04108d8027e5714ebd0fd53..557f9f734c9e04fba0ba225494446b012883e0a1 100644
+--- a/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
++++ b/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
+@@ -1221,6 +1221,36 @@ LepNtQuerySystemInformation(
+ 
+             HpSetFilterAction(BlockSystemCall);
+ 
++            return STATUS_SUCCESS;
++
++        case SystemDynamicTimeZoneInformation:
++            if (SystemInformation == nullptr)
++                break;
++
++            if (SystemInformationLength < sizeof(RTL_DYNAMIC_TIME_ZONE_INFORMATION))
++                break;
++
++            {
++                PRTL_DYNAMIC_TIME_ZONE_INFORMATION Dynamic =
++                    (PRTL_DYNAMIC_TIME_ZONE_INFORMATION)SystemInformation;
++                ZeroMemory(Dynamic, sizeof(*Dynamic));
++                Dynamic->TZI = GlobalData->GetEnvironment()->Timezone;
++                if (GlobalData->ConfiguredTimezoneId[0] != 0)
++                {
++                    ULONG_PTR Length = StrLengthW(GlobalData->ConfiguredTimezoneId);
++                    if (Length >= countof(Dynamic->TimeZoneKeyName))
++                        Length = countof(Dynamic->TimeZoneKeyName) - 1;
++                    CopyMemory(Dynamic->TimeZoneKeyName, GlobalData->ConfiguredTimezoneId,
++                               (Length + 1) * sizeof(WCHAR));
++                }
++                Dynamic->DynamicDaylightTimeDisabled = FALSE;
++            }
++
++            if (ReturnLength != nullptr)
++                *ReturnLength = sizeof(RTL_DYNAMIC_TIME_ZONE_INFORMATION);
++
++            HpSetFilterAction(BlockSystemCall);
++
+             return STATUS_SUCCESS;
+     }
+ 
+@@ -2664,6 +2694,7 @@ LepRtlGetThreadPreferredUILanguages(
+ )
+ {
+     PLepGlobalData GlobalData = LepGetGlobalData();
++    ULONG Capacity = BufferLength != nullptr ? *BufferLength : 0;
+ 
+     NTSTATUS Status = GlobalData->HookStub.StubRtlGetThreadPreferredUILanguages(
+         Flags,
+@@ -2672,6 +2703,60 @@ LepRtlGetThreadPreferredUILanguages(
+         BufferLength
+     );
+ 
++    // In virtual MUI mode the configured culture is the only preferred
++    // language.  The original ntdll call may succeed with the host list, so
++    // override it instead of relying on the OBJECT_NAME_NOT_FOUND fallback.
++    if (GlobalData->GetEnvironment()->HookUILanguageMode == 2 &&
++        (Flags & (MUI_LANGUAGE_ID | MUI_LANGUAGE_NAME)) != 0 &&
++        NumberOfLanguages != nullptr &&
++        BufferLength != nullptr &&
++        GlobalData->HookRoutineData.Ntdll.MuiLanguageNameLength != 0)
++    {
++        BOOLEAN ReturnLanguageIds = (Flags & MUI_LANGUAGE_ID) != 0;
++        WCHAR LanguageId[5] = {};
++        PCWSTR LanguageName = GlobalData->HookRoutineData.Ntdll.MuiLanguageName;
++        ULONG RequiredLength;
++
++        if (ReturnLanguageIds)
++        {
++            typedef BOOLEAN (NTAPI *PRTL_CULTURE_NAME_TO_LCID)(PUNICODE_STRING, PLCID);
++            PRTL_CULTURE_NAME_TO_LCID CultureNameToLcid;
++            *(PVOID *)&CultureNameToLcid = LookupExportTable(
++                GetNtdllHandle(), lep::HashExportName("RtlCultureNameToLCID"));
++            LCID LocaleId = 0;
++            UNICODE_STRING Name;
++            RtlInitUnicodeString(&Name, LanguageName);
++            if (CultureNameToLcid == nullptr || !CultureNameToLcid(&Name, &LocaleId))
++                return Status;
++            static const WCHAR HexDigits[] = L"0123456789ABCDEF";
++            LANGID Language = LANGIDFROMLCID(LocaleId);
++            LanguageId[0] = HexDigits[(Language >> 12) & 0xF];
++            LanguageId[1] = HexDigits[(Language >> 8) & 0xF];
++            LanguageId[2] = HexDigits[(Language >> 4) & 0xF];
++            LanguageId[3] = HexDigits[Language & 0xF];
++            LanguageId[4] = 0;
++            RequiredLength = 6;
++        }
++        else
++        {
++            RequiredLength = (ULONG)StrLengthW(LanguageName) + 2;
++        }
++
++        *NumberOfLanguages = 1;
++        *BufferLength = RequiredLength;
++        if (LanguagesBuffer == nullptr || Capacity < RequiredLength)
++            return STATUS_BUFFER_TOO_SMALL;
++
++        PCWSTR Source = ReturnLanguageIds ? LanguageId : LanguageName;
++        ULONG Length = (ULONG)StrLengthW(Source);
++        CopyMemory(LanguagesBuffer, Source, Length * sizeof(WCHAR));
++        LanguagesBuffer[Length] = 0;
++        LanguagesBuffer[Length + 1] = 0;
++        WriteLog(L"RtlGetThreadPreferredUILanguages virtual override: flags=%08X language=%ws",
++                 Flags, Source);
++        return STATUS_SUCCESS;
++    }
++
+     // Calls without MUI_LANGUAGE_ID/MUI_LANGUAGE_NAME are also used by
+     // KernelBase to make ntdll initialize its private per-thread MUI cache.
+     // Returning synthetic success there is unsafe: the caller subsequently
+diff --git a/LocaleEmulatorPlus/Hooks/WinrtHook.cpp b/LocaleEmulatorPlus/Hooks/WinrtHook.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..8463ee265684048fd16116eb6bfe0aa42c1b8865
+--- /dev/null
++++ b/LocaleEmulatorPlus/Hooks/WinrtHook.cpp
+@@ -0,0 +1,165 @@
++#include "stdafx.h"
++#include <windows.system.userprofile.h>
++
++using namespace Mp;
++using LanguageView = ABI::Windows::Foundation::Collections::IVectorView<HSTRING>;
++using Preferences = ABI::Windows::System::UserProfile::IGlobalizationPreferencesStatics;
++
++namespace {
++using CreateStringFn = HRESULT(WINAPI*)(PCWSTR, UINT32, HSTRING*);
++using DeleteStringFn = HRESULT(WINAPI*)(HSTRING);
++using StringBufferFn = PCWSTR(WINAPI*)(HSTRING, UINT32*);
++using TaskAllocFn = PVOID(WINAPI*)(SIZE_T);
++using ActivationFn = HRESULT(WINAPI*)(HSTRING, REFIID, PVOID*);
++CreateStringFn createString;
++DeleteStringFn deleteString;
++StringBufferFn stringBuffer;
++TaskAllocFn taskAlloc;
++
++template<class Interface> class Inspectable : public Interface {
++    volatile LONG references = 1;
++protected:
++    virtual ~Inspectable() = default;
++public:
++    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override {
++        if (!value) return E_POINTER;
++        *value = nullptr;
++        if (iid != __uuidof(IUnknown) && iid != __uuidof(IInspectable) && iid != __uuidof(Interface))
++            return E_NOINTERFACE;
++        *value = static_cast<Interface*>(this);
++        AddRef();
++        return S_OK;
++    }
++    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&references); }
++    ULONG STDMETHODCALLTYPE Release() override {
++        ULONG remaining = InterlockedDecrement(&references);
++        if (!remaining) delete this;
++        return remaining;
++    }
++    HRESULT STDMETHODCALLTYPE GetIids(ULONG* count, IID** values) override {
++        if (!count || !values) return E_POINTER;
++        *count = 0;
++        *values = static_cast<IID*>(taskAlloc(sizeof(IID)));
++        if (!*values) return E_OUTOFMEMORY;
++        **values = __uuidof(Interface);
++        *count = 1;
++        return S_OK;
++    }
++    HRESULT STDMETHODCALLTYPE GetRuntimeClassName(HSTRING* value) override {
++        if (!value) return E_POINTER;
++        return createString(L"", 0, value);
++    }
++    HRESULT STDMETHODCALLTYPE GetTrustLevel(TrustLevel* value) override {
++        if (!value) return E_POINTER;
++        *value = BaseTrust;
++        return S_OK;
++    }
++};
++
++class VirtualLanguages final : public Inspectable<LanguageView> {
++    WCHAR locale[LOCALE_NAME_MAX_LENGTH]{};
++public:
++    explicit VirtualLanguages(PCWSTR name) { StrCopyW(locale, name); }
++    HRESULT STDMETHODCALLTYPE GetAt(UINT32 index, HSTRING* value) override {
++        if (!value) return E_POINTER;
++        *value = nullptr;
++        if (index != 0) return E_BOUNDS;
++        return createString(locale, (UINT32)StrLengthW(locale), value);
++    }
++    HRESULT STDMETHODCALLTYPE get_Size(UINT32* value) override {
++        if (!value) return E_POINTER;
++        *value = 1;
++        return S_OK;
++    }
++    HRESULT STDMETHODCALLTYPE IndexOf(HSTRING value, UINT32* index, boolean* found) override {
++        if (!index || !found) return E_POINTER;
++        *index = 0;
++        UINT32 length = 0;
++        PCWSTR name = stringBuffer(value, &length);
++        *found = length == StrLengthW(locale) && memcmp(name, locale, length * sizeof(WCHAR)) == 0;
++        return S_OK;
++    }
++    HRESULT STDMETHODCALLTYPE GetMany(UINT32 start, UINT32 capacity, HSTRING* values,
++                                       UINT32* actual) override {
++        if (!actual || (capacity && !values)) return E_POINTER;
++        *actual = 0;
++        if (start > 1) return E_BOUNDS;
++        if (start == 1 || !capacity) return S_OK;
++        HRESULT hr = GetAt(0, values);
++        if (SUCCEEDED(hr)) *actual = 1;
++        return hr;
++    }
++};
++
++class VirtualPreferences final : public Inspectable<Preferences> {
++    Preferences* original;
++public:
++    explicit VirtualPreferences(Preferences* value) : original(value) {}
++    ~VirtualPreferences() override { original->Release(); }
++    HRESULT STDMETHODCALLTYPE get_Languages(LanguageView** value) override {
++        if (!value) return E_POINTER;
++        *value = nullptr;
++        WCHAR name[LOCALE_NAME_MAX_LENGTH]{};
++        if (!LCIDToLocaleName(LepGetGlobalData()->GetEnvironment()->LocaleId, name, countof(name), 0))
++            return E_FAIL;
++        *value = new VirtualLanguages(name);
++        if (!*value) return E_OUTOFMEMORY;
++        WriteLog(L"WinRT GlobalizationPreferences.Languages virtual override: %ws", name);
++        return S_OK;
++    }
++    HRESULT STDMETHODCALLTYPE get_Calendars(LanguageView** value) override { return original->get_Calendars(value); }
++    HRESULT STDMETHODCALLTYPE get_Clocks(LanguageView** value) override { return original->get_Clocks(value); }
++    HRESULT STDMETHODCALLTYPE get_Currencies(LanguageView** value) override { return original->get_Currencies(value); }
++    HRESULT STDMETHODCALLTYPE get_HomeGeographicRegion(HSTRING* value) override { return original->get_HomeGeographicRegion(value); }
++    HRESULT STDMETHODCALLTYPE get_WeekStartsOn(ABI::Windows::Globalization::DayOfWeek* value) override { return original->get_WeekStartsOn(value); }
++};
++
++HRESULT WINAPI LepRoGetActivationFactory(HSTRING classId, REFIID iid, PVOID* value) {
++    auto original = reinterpret_cast<ActivationFn>(LepGetGlobalData()->HookStub.StubRoGetActivationFactory);
++    HRESULT hr = original(classId, iid, value);
++    if (FAILED(hr) || !value || !*value || iid != __uuidof(Preferences)) return hr;
++    UINT32 length = 0;
++    PCWSTR name = stringBuffer(classId, &length);
++    static const WCHAR target[] = L"Windows.System.UserProfile.GlobalizationPreferences";
++    if (length != countof(target) - 1 || memcmp(name, target, length * sizeof(WCHAR)) != 0) return hr;
++    auto wrapped = new VirtualPreferences(static_cast<Preferences*>(*value));
++    if (!wrapped) {
++        static_cast<Preferences*>(*value)->Release();
++        *value = nullptr;
++        return E_OUTOFMEMORY;
++    }
++    *value = static_cast<Preferences*>(wrapped);
++    return S_OK;
++}
++} // namespace
++
++// The SDK's collection template references this helper even with GetMany
++// overridden. Resolve it at runtime, as Core is manually mapped before WinRT
++// loads and must not introduce a combase import into its bootstrap.
++extern "C" HRESULT WINAPI WindowsDeleteString(HSTRING value) {
++    return deleteString(value);
++}
++
++NTSTATUS LepGlobalData::HookCombaseRoutines(PVOID module) {
++    if (GetEnvironment()->HookUILanguageMode != 2 || HookStub.StubRoGetActivationFactory)
++        return STATUS_SUCCESS;
++    createString = reinterpret_cast<CreateStringFn>(GetRoutineAddress(module, "WindowsCreateString"));
++    deleteString = reinterpret_cast<DeleteStringFn>(GetRoutineAddress(module, "WindowsDeleteString"));
++    stringBuffer = reinterpret_cast<StringBufferFn>(GetRoutineAddress(module, "WindowsGetStringRawBuffer"));
++    taskAlloc = reinterpret_cast<TaskAllocFn>(GetRoutineAddress(module, "CoTaskMemAlloc"));
++    PVOID factory = GetRoutineAddress(module, "RoGetActivationFactory");
++    if (!createString || !deleteString || !stringBuffer || !taskAlloc || !factory) return STATUS_PROCEDURE_NOT_FOUND;
++    Mp::PATCH_MEMORY_DATA patches[] = {
++        Mp::FunctionJumpVa(factory, LepRoGetActivationFactory,
++                           &HookStub.StubRoGetActivationFactory, LEP_FUNCTION_JUMP_OP),
++    };
++    NTSTATUS status = Mp::PatchMemory(patches, countof(patches));
++    WriteLog(L"hook WinRT globalization activation: %08X", status);
++    return status;
++}
++
++NTSTATUS LepGlobalData::UnHookCombaseRoutines() {
++    Mp::RestoreMemory(HookStub.StubRoGetActivationFactory);
++    HookStub.StubRoGetActivationFactory = nullptr;
++    return STATUS_SUCCESS;
++}
+diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp b/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
+index 94a8f74ffa55daf40c28760a890f18e434131989..c1551351023223662dea70a45ff99779c5cacaea 100644
+--- a/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
++++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
+@@ -194,6 +194,13 @@ NTSTATUS LepGlobalData::Initialize(PLEP_BOOTSTRAP_PAYLOAD Payload, BOOL OwnPaylo
+ 
+     IsLoader = IsLepLoader();
+     DiagVerbose = !IsLoader;
++    ZeroMemory(ConfiguredTimezoneId, sizeof(ConfiguredTimezoneId));
++    DWORD ConfiguredTimezoneLength = GetEnvironmentVariableW(
++        L"CP_TIMEZONE", ConfiguredTimezoneId, countof(ConfiguredTimezoneId));
++    if (ConfiguredTimezoneLength >= countof(ConfiguredTimezoneId))
++        ConfiguredTimezoneId[0] = 0;
++    if (ConfiguredTimezoneId[0] != 0)
++        WriteLog(L"configured timezone id: %ws", ConfiguredTimezoneId);
+     if (!LepValidateBootstrapPayload(Payload))
+         return STATUS_INVALID_PARAMETER;
+ 
+@@ -428,6 +435,15 @@ NTSTATUS LepGlobalData::Initialize(PLEP_BOOTSTRAP_PAYLOAD Payload, BOOL OwnPaylo
+             Kernel32Ldr->EntryPoint = DelayInitDllEntry;
+     }
+ 
++    PLDR_MODULE CombaseLdr = FindLdrModuleByName(&USTR(L"combase.dll"));
++    if (CombaseLdr != nullptr)
++    {
++        if (FLAG_ON(CombaseLdr->Flags, LDRP_PROCESS_ATTACH_CALLED))
++            HookCombaseRoutines(CombaseLdr->DllBase);
++        else
++            CombaseLdr->EntryPoint = DelayInitDllEntry;
++    }
++
+ #else
+     WriteLog(L"process-only: nlsApply=%u; DLL notifications, module entry replacement and non-process hooks disabled",
+              (ULONG)!LEP_DIAG_SKIP_NLS_APPLY);
+@@ -650,6 +666,7 @@ PDLL_HOOK_ENTRY LookupDllHookEntry(PCUNICODE_STRING BaseDllName)
+         { RTL_CONSTANT_STRING(L"GDI32.dll"),        &LepGlobalData::HookGdi32Routines,       &LepGlobalData::UnHookGdi32Routines },
+         { RTL_CONSTANT_STRING(L"KERNELBASE.dll"),   &LepGlobalData::HookKernel32Routines,    &LepGlobalData::UnHookKernel32Routines },
+         { RTL_CONSTANT_STRING(L"KERNEL32.dll"),     &LepGlobalData::HookKernel32Routines,    &LepGlobalData::UnHookKernel32Routines },
++        { RTL_CONSTANT_STRING(L"combase.dll"),      &LepGlobalData::HookCombaseRoutines,     &LepGlobalData::UnHookCombaseRoutines },
+     };
+ 
+     PDLL_HOOK_ENTRY Entry;
+@@ -743,6 +760,7 @@ NTSTATUS LepGlobalData::UnInitialize()
+     UnHookGdi32Routines();
+     UnHookUser32Routines();
+     UnHookKernel32Routines();
++    UnHookCombaseRoutines();
+     UnHookNtdllRoutines();
+ #endif
+ 
+diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.h b/LocaleEmulatorPlus/LocaleEmulatorPlus.h
+index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd848462f9e 100644
+--- a/LocaleEmulatorPlus/LocaleEmulatorPlus.h
++++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.h
+@@ -41,6 +41,8 @@ typedef LepGlobalData* PLepGlobalData;
+ typedef ULONG (NTAPI *PLEP_QUERY_FONT_ASSOC_STATUS)();
+ typedef LONG (WINAPI *PLEP_GDI_GET_CHAR_DIMENSIONS)(HDC, LPTEXTMETRICW, LONG *);
+ typedef LANGID (WINAPI *PLEP_GET_DEFAULT_UI_LANGUAGE)();
++typedef UINT (WINAPI *PLEP_GET_CODE_PAGE)();
++typedef BOOL (WINAPI *PLEP_GET_PREFERRED_UI_LANGUAGES)(DWORD, PULONG, PWSTR, PULONG);
+ typedef NTSTATUS (NTAPI *PLEP_GET_THREAD_PREFERRED_UI_LANGUAGES)(
+     ULONG Flags,
+     PULONG NumberOfLanguages,
+@@ -780,6 +782,7 @@ protected:
+ public:
+     PVOID CodePageMapView;
+     ULONG_PTR AnsiCodePageOffset, OemCodePageOffset, UnicodeCaseTableOffset;
++    WCHAR ConfiguredTimezoneId[128];
+ 
+ protected:
+     PVOID DllNotificationCookie;
+@@ -806,6 +809,12 @@ public:
+         API_POINTER(RtlCustomCPToUnicodeN)      StubRtlCustomCPToUnicodeN;
+         PLEP_GET_DEFAULT_UI_LANGUAGE            StubGetSystemDefaultUILanguage;
+         PLEP_GET_DEFAULT_UI_LANGUAGE            StubGetUserDefaultUILanguage;
++        PLEP_GET_CODE_PAGE                      StubGetACP;
++        PLEP_GET_CODE_PAGE                      StubGetOEMCP;
++        PLEP_GET_PREFERRED_UI_LANGUAGES         StubGetUserPreferredUILanguages;
++        PLEP_GET_PREFERRED_UI_LANGUAGES         StubGetSystemPreferredUILanguages;
++        PLEP_GET_PREFERRED_UI_LANGUAGES         StubGetThreadPreferredUILanguages;
++        PVOID                                  StubRoGetActivationFactory;
+         API_POINTER(NtUserMessageCall)          StubNtUserMessageCall;
+         API_POINTER(NtUserDefSetText)           StubNtUserDefSetText;
+         PVOID                                   StubGetDpiServerInfoForCurrentThread;
+@@ -1006,6 +1015,8 @@ public:
+ 
+     NTSTATUS HookKernel32Routines(PVOID Kernel32);
+     NTSTATUS UnHookKernel32Routines();
++    NTSTATUS HookCombaseRoutines(PVOID Module);
++    NTSTATUS UnHookCombaseRoutines();
+ 
+     NTSTATUS
+     LookupRegistryRedirectionEntry(
+diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
+index f24d155c5fe4c81f3bbe718f4d888a6aa4c78228..b82f747f313bffd78259af847b181d5ff9ad9a25 100644
+--- a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
++++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
+@@ -24,6 +24,7 @@
+     <ClCompile Include="HookPort.cpp" />
+     <ClCompile Include="Hooks\Gdi32Hook.cpp" />
+     <ClCompile Include="Hooks\Kernel32Hook.cpp" />
++    <ClCompile Include="Hooks\WinrtHook.cpp" />
+     <ClCompile Include="Hooks\NtdllHook.cpp" />
+     <ClCompile Include="Hooks\User32Hook.cpp" />
+     <ClCompile Include="LocaleEmulatorPlus.cpp" />
+diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
+index 93caba443ee5cf9d0c7799a002c2301b58130e95..09f6bb9a7c1df6ce4e86a67c197e615d8f37d96a 100644
+--- a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
++++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
+@@ -47,6 +47,9 @@
+     <ClCompile Include="Hooks\Kernel32Hook.cpp">
+       <Filter>Hooks</Filter>
+     </ClCompile>
++    <ClCompile Include="Hooks\WinrtHook.cpp">
++      <Filter>Hooks</Filter>
++    </ClCompile>
+     <ClCompile Include="Hooks\NtdllHook.cpp">
+       <Filter>Hooks</Filter>
+     </ClCompile>
+diff --git a/LocaleEmulatorPlus/support/native/Runtime.h b/LocaleEmulatorPlus/support/native/Runtime.h
+index 18651066ddc72125abbdff95c42a5c4f07b78cf1..fb8c8ca8ee47feee7ecf0c7ba17cb773902c53de 100644
+--- a/LocaleEmulatorPlus/support/native/Runtime.h
++++ b/LocaleEmulatorPlus/support/native/Runtime.h
+@@ -251,6 +251,15 @@ typedef struct _RTL_TIME_ZONE_INFORMATION {
+     LONG        DaylightBias;
+ } RTL_TIME_ZONE_INFORMATION, *PRTL_TIME_ZONE_INFORMATION;
+ 
++typedef struct _RTL_DYNAMIC_TIME_ZONE_INFORMATION {
++    RTL_TIME_ZONE_INFORMATION TZI;
++    WCHAR TimeZoneKeyName[128];
++    BOOLEAN DynamicDaylightTimeDisabled;
++} RTL_DYNAMIC_TIME_ZONE_INFORMATION, *PRTL_DYNAMIC_TIME_ZONE_INFORMATION;
++
++static_assert(sizeof(RTL_DYNAMIC_TIME_ZONE_INFORMATION) == 432,
++              "dynamic time-zone information layout mismatch");
++
+ NATIVE_API
+ PIMAGE_NT_HEADERS
+ NTAPI
+diff --git a/ai-docs/2026-10-29-claude-protect-integration.md b/ai-docs/2026-10-29-claude-protect-integration.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..baa0a50e7aa6d254c20ac3c5476f95a2708709a8
+--- /dev/null
++++ b/ai-docs/2026-10-29-claude-protect-integration.md
+@@ -0,0 +1,36 @@
++# ClaudeProtect integration changes (2026-10-29)
++
++These changes were made while integrating Core with ClaudeProtect. Public LEPB v4 and `LEP_RUNTIME_ENVIRONMENT` layouts are unchanged.
++
++## Changes
++
++- `Hooks/NtdllHook.cpp`
++  - Handle `SystemDynamicTimeZoneInformation` in `LepNtQuerySystemInformation`, returning the configured `RTL_DYNAMIC_TIME_ZONE_INFORMATION`. The key name comes from `LepGlobalData::ConfiguredTimezoneId`.
++  - In virtual MUI mode, override `RtlGetThreadPreferredUILanguages` results with the configured culture when `MUI_LANGUAGE_ID`/`MUI_LANGUAGE_NAME` is requested.
++- `Hooks/Kernel32Hook.cpp`
++  - Add `GetACP`/`GetOEMCP` export hooks returning the configured code pages. PEB/ntdll synchronization alone did not cover `GetACP` on this build.
++  - Add `GetUserPreferredUILanguages`/`GetSystemPreferredUILanguages` export hooks returning the configured culture. The size query (`LanguagesBuffer == nullptr`) returns TRUE with the required length; an undersized buffer returns FALSE with `ERROR_INSUFFICIENT_BUFFER`.
++  - Install the existing `GetUserDefaultUILanguage`/`GetSystemDefaultUILanguage` export hooks for `HookUILanguageMode >= 1`, so mode 2 also covers those exports.
++- `LocaleEmulatorPlus.cpp`
++  - Read `CP_TIMEZONE` into `ConfiguredTimezoneId` at initialization. This is an integration input from the launcher, not a public ABI change.
++- `LocaleEmulatorPlus.h`
++  - Add `ConfiguredTimezoneId[128]` to `LepGlobalData`; add preferred-language hook typedefs and stubs.
++- `support/native/Runtime.h`
++  - Add `RTL_DYNAMIC_TIME_ZONE_INFORMATION` with a 432-byte layout assertion.
++
++## Why
++
++Chromium/Electron and ICU use `GetDynamicTimeZoneInformation`, which was not virtualized by the `SystemCurrentTimeZoneInformation` case. Chromium language/navigator behavior required both the Win32 UI-language exports and `--lang`; preferred-language queries otherwise returned the host list. `GetACP`/`GetOEMCP` returned host values despite PEB/ntdll synchronization in the tested build.
++
++## Verification
++
++- `scripts/build-lep.ps1 -Test` passed all four upstream suites.
++- Native probe: UTC/en-US and Tokyo/ja-JP both pass time zone (static and dynamic), locale, ACP/OEMCP, UI language, preferred languages, Job membership and LEP initialization.
++- Chromium/Edge proxy under LEP: renderer and Worker report UTC/en-US and Asia/Tokyo/ja-JP as configured; `--lang` supplies the Chromium language switch.
++- Claude Desktop process tree under LEP: main, crashpad, GPU, utility and renderers are in the Job; LEP injection/log evidence is present; Stop, main exit and supervisor kill leave no processes.
++
++## Known limits
++
++- `CP_TIMEZONE` is required for dynamic time-zone key names. Without it the dynamic case returns the configured bias/names but an empty key name; launchers that need `GetDynamicTimeZoneInformation().TimeZoneKeyName` must set it.
++- The preferred-language export hooks return a single configured language; host fallback chains are intentionally removed inside the virtualized process.
++- `GetSystemDefaultLocaleName`/system LCID are not changed.
+diff --git a/ai-docs/claude-language-virtualization.md b/ai-docs/claude-language-virtualization.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d8daa7234b7be2aafbf5759348e8f7a58f55667
+--- /dev/null
++++ b/ai-docs/claude-language-virtualization.md
+@@ -0,0 +1,11 @@
++# Electron language virtualization
++
++With `HookUILanguageMode=2`, Core virtualizes the Win32 user, system and thread preferred UI-language lists and the `Languages` property of `Windows.System.UserProfile.GlobalizationPreferences` requested through `IGlobalizationPreferencesStatics`.
++
++Electron 44.9.3 first reads this WinRT property for `app.getPreferredSystemLanguages()`, then falls back to a merged thread UI-language list. Hooking only the user/system Win32 exports leaves its first-choice path on host languages. See [Electron's implementation](https://github.com/electron/electron/blob/v44.9.3/shell/common/language_util_win.cc).
++
++`Hooks/WinrtHook.cpp` hooks `combase!RoGetActivationFactory` after combase initialization, including lazy loads through the existing module notification mechanism. Only the exact class/interface pair is wrapped. The wrapper owns the original factory reference, implements IUnknown/IInspectable lifetime, returns an immutable single-language `IVectorView<HSTRING>`, and delegates the other globalization properties to the original object. Other classes and requested interfaces remain untouched; the newer per-user globalization interface is not virtualized by this wrapper.
++
++String and COM allocator exports are resolved dynamically. Core remains manually mapped and introduces no combase import into bootstrap. The public LEPB v4 layout is unchanged. Mode 0/1 do not install these preferred-language/WinRT hooks.
++
++ClaudeProtect's independent probe covers the same WinRT Size/GetAt path as Electron, plus IndexOf, GetMany, bounds and HSTRING ownership, for parent and child processes. Matching x86 and x64 loaders pass en-US; x64 also passes ja-JP. These probe results are not direct evidence of Claude's rendered interface or a guarantee about an application's saved language override.
+diff --git a/build.py b/build.py
+index 37ddaf635dbc6f9dbc76d752deef9e01bbccfc40..5c8873fac178bb91f4ba1c96ff1b7e5be3831075 100644
+--- a/build.py
++++ b/build.py
+@@ -20,6 +20,7 @@ CORE_SOURCES = (
+     "HandleTable.cpp",
+     "Hooks/Gdi32Hook.cpp",
+     "Hooks/Kernel32Hook.cpp",
++    "Hooks/WinrtHook.cpp",
+     "Hooks/NtdllHook.cpp",
+     "Hooks/User32Hook.cpp",
+     "LocaleEmulatorPlus.cpp",
+@@ -81,7 +82,7 @@ class BuildConfig:
+         """Check every selected toolchain before producing partial output."""
+         files = [self.linker, self.sdk_include / "um/winnt.h"]
+         directories = [self.vc_tools / "include"]
+-        directories += [self.sdk_include / name for name in ("ucrt", "shared", "um", "km")]
++        directories += [self.sdk_include / name for name in ("ucrt", "shared", "um", "km", "winrt")]
+         for arch in architectures:
+             host = self.vc_tools / "bin/Hostx64" / arch
+             files += [host / "cl.exe", host / "lib.exe"]
+@@ -118,7 +119,7 @@ class NativeBuild:
+         ]
+         self.includes = [f"/I{path}" for path in (
+             self.core, config.vc_tools / "include",
+-            *(config.sdk_include / name for name in ("ucrt", "shared", "um", "km")),
++            *(config.sdk_include / name for name in ("ucrt", "shared", "um", "km", "winrt")),
+         )]
+         self.library_paths = [f"/libpath:{path}" for path in (
+             config.sdk_root / "Lib" / config.sdk_version / "um" / arch,

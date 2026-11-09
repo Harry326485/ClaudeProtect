@@ -1,0 +1,3 @@
+[submodule "LocaleEmulatorPlus-Core"]
+	path = LocaleEmulatorPlus-Core
+	url = https://github.com/julixian/LocaleEmulatorPlus-Core.git
