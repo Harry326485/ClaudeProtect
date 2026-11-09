@@ -27,14 +27,21 @@ Write-Host 'Building EnvironmentProbe.exe'
 if ($LASTEXITCODE) { throw 'Probe build failed' }
 
 Write-Host 'Building ClaudeProtect.exe'
+& (Join-Path $PSScriptRoot 'prepare-webview2.ps1')
+& (Join-Path $PSScriptRoot 'pack-ui.ps1')
+Copy-Item -LiteralPath (Join-Path $root 'LICENSES/picojson-BSD-2-Clause.txt') `
+    -Destination (Join-Path $build 'picojson-LICENSE.txt') -Force
 $resources = Join-Path $build 'resources.o'
 & $Windres -I $root (Join-Path $root 'src/resources.rc') -O coff -o $resources
 if ($LASTEXITCODE) { throw 'Icon resource build failed' }
 $traySources = @(
-    'src/main.cpp', 'src/config.cpp', 'src/session.cpp', 'src/lep.cpp', 'src/editor.cpp'
+    'src/main.cpp', 'src/config.cpp', 'src/session.cpp', 'src/lep.cpp', 'src/ui.cpp'
 ) | ForEach-Object { Join-Path $root $_ }
-& $Gcc @flags -mwindows @traySources $resources -o (Join-Path $build 'ClaudeProtect.exe') `
-    -luser32 -lshell32 -lcomdlg32 -ladvapi32
+& $Gcc @flags -mwindows -Wno-unknown-pragmas `
+    -I (Join-Path $root 'src/webview2_compat') `
+    -isystem (Join-Path $build 'deps/webview2/build/native/include') `
+    @traySources $resources -o (Join-Path $build 'ClaudeProtect.exe') `
+    -luser32 -lshell32 -ladvapi32 -lole32 -luuid -lgdi32
 if ($LASTEXITCODE) { throw 'Tray build failed' }
 
 if ($BuildLep) {

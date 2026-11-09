@@ -155,7 +155,7 @@ bool parseUlong(const std::wstring& text, const wchar_t* name, unsigned long min
     wchar_t* end = nullptr;
     unsigned long parsed = wcstoul(text.c_str(), &end, 10);
     if (!end || *end != 0 || parsed < min || parsed > max) {
-        error = std::wstring(L"Invalid value for ") + name + L": " + text;
+        error = std::wstring(L"设置值无效，") + name + L" = " + text;
         return false;
     }
     value = (ULONG)parsed;
@@ -344,12 +344,12 @@ static bool parseConfigText(const std::wstring& baseDir, const std::wstring& tex
 
     config.executable = iniValue(values, L"Executable");
     config.timezoneId = iniValue(values, L"Timezone", L"Pacific Standard Time");
-    config.timezoneIana = iniValue(values, L"TimezoneIana");
+    config.timezoneIana = mapWindowsTimeZoneToIana(config.timezoneId);
     config.locale = iniValue(values, L"Locale", L"en-US");
     config.standardName = iniValue(values, L"StandardName");
     config.daylightName = iniValue(values, L"DaylightName");
     config.extraArguments = iniValue(values, L"ExtraArguments");
-    config.lepDir = iniValue(values, L"LepDirectory");
+    config.lepDir = joinPath(baseDir, L"lep");
 
     if (!parseUlong(iniValue(values, L"AnsiCodePage"), L"AnsiCodePage", 0, 65535, config.ansiCodePage, error))
         return false;
@@ -368,7 +368,7 @@ static bool parseConfigText(const std::wstring& baseDir, const std::wstring& tex
     if (verify == L"1") verify = L"strict";
     if (verify == L"0") verify = L"off";
     if (verify != L"strict" && verify != L"warn" && verify != L"off") {
-        error = L"VerifyInjection must be strict, warn, or off";
+        error = L"注入验证必须为 strict、warn 或 off。";
         return false;
     }
     config.verifyMode = verify;
@@ -380,7 +380,7 @@ static bool parseConfigText(const std::wstring& baseDir, const std::wstring& tex
 
     std::wstring preflight = lower(iniValue(values, L"Preflight", L"auto"));
     if (preflight != L"auto" && preflight != L"require" && preflight != L"off") {
-        error = L"Preflight must be auto, require, or off";
+        error = L"启动预检必须为 auto、require 或 off。";
         return false;
     }
     config.preflight = preflight;
@@ -404,8 +404,13 @@ bool saveConfigText(const std::wstring& baseDir, const std::wstring& text, std::
     Config candidate;
     if (!parseConfigText(baseDir, text, candidate, error) || !prepareConfig(candidate, error))
         return false;
-    auto temporary = candidate.iniPath + L".tmp";
-    if (!writeTextFile(temporary, text, error)) return false;
+    static LONG sequence = 0;
+    auto temporary = candidate.iniPath + L"." + std::to_wstring(GetCurrentProcessId()) +
+                     L"." + std::to_wstring(InterlockedIncrement(&sequence)) + L".tmp";
+    if (!writeTextFile(temporary, text, error)) {
+        DeleteFileW(temporary.c_str());
+        return false;
+    }
     if (!MoveFileExW(temporary.c_str(), candidate.iniPath.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         error = L"Cannot save settings: " + winErrorText(GetLastError());
@@ -421,11 +426,10 @@ bool writeDefaultConfig(const std::wstring& iniPath, const std::wstring& executa
     text += L"; ClaudeProtect configuration. Changes apply on the next launch.\r\n";
     text += L"; Timezone is a Windows time zone ID, not a display name or IANA name.\r\n";
     text += L"; Examples: UTC, China Standard Time, Tokyo Standard Time, Pacific Standard Time.\r\n";
-    text += L"; TimezoneIana only sets the child TZ variable; it is not proof of Electron behavior.\r\n";
+    text += L"; IANA is automatic; LEP is fixed to the lep directory beside the executable.\r\n";
     text += L"[ClaudeProtect]\r\n";
     text += L"Executable=" + executable + L"\r\n";
     text += L"Timezone=Pacific Standard Time\r\n";
-    text += L"TimezoneIana=America/Los_Angeles\r\n";
     text += L"Locale=en-US\r\n";
     text += L"AnsiCodePage=0\r\n";
     text += L"OemCodePage=0\r\n";
@@ -435,71 +439,66 @@ bool writeDefaultConfig(const std::wstring& iniPath, const std::wstring& executa
     text += L"VerifyInjection=strict\r\n";
     text += L"VerifyGraceSeconds=8\r\n";
     text += L"Preflight=auto\r\n";
-    text += L"LepDirectory=lep\r\n";
     text += L"ExtraArguments=\r\n";
     return writeTextFile(iniPath, text, error);
 }
 
-bool updateIniValue(const std::wstring& iniPath, const std::wstring& key,
-                    const std::wstring& value, std::wstring& error) {
-    if (value.find_first_of(L"\r\n") != std::wstring::npos) {
-        error = L"Configuration values cannot contain line breaks";
+bool loadSettings(const std::wstring& baseDir, SettingsValues& values,
+                  std::wstring& source, std::wstring& error) {
+    source.clear();
+    error.clear();
+    const auto path = joinPath(baseDir, L"ClaudeProtect.ini");
+    if (fileExists(path) && !readTextFile(path, source, error)) return false;
+    values = parseIni(source);
+    return true;
+}
+
+bool saveSettings(const std::wstring& baseDir, const SettingsValues& values,
+                  const std::wstring& source, std::wstring& error) {
+    SettingsValues current;
+    std::wstring text;
+    if (!loadSettings(baseDir, current, text, error)) return false;
+    if (text != source) {
+        error = L"配置文件已被其他程序修改。请先重新加载，再保存设置。";
         return false;
     }
-    std::wstring text;
-    if (fileExists(iniPath) && !readTextFile(iniPath, text, error)) return false;
-
-    std::vector<std::wstring> lines;
+    for (const auto& entry : values) {
+        if (entry.second.find_first_of(L"\r\n") != std::wstring::npos || entry.second.find(L'\0') != std::wstring::npos) {
+            error = L"设置内容不能包含换行。";
+            return false;
+        }
+    }
+    SettingsValues remaining = values;
+    std::wstring output, section;
     size_t pos = 0;
-    while (pos <= text.size()) {
+    while (pos < text.size()) {
         size_t end = text.find_first_of(L"\r\n", pos);
         if (end == std::wstring::npos) end = text.size();
-        lines.push_back(text.substr(pos, end - pos));
-        pos = end + 1;
-    }
-    if (!lines.empty() && lines.back().empty()) lines.pop_back();
-
-    size_t sectionStart = lines.size();
-    size_t sectionEnd = lines.size();
-    for (size_t i = 0; i < lines.size(); ++i) {
-        std::wstring line = trim(lines[i]);
-        if (line.size() >= 2 && line.front() == L'[' && line.back() == L']' &&
-            lower(line.substr(1, line.size() - 2)) == L"claudeprotect") {
-            sectionStart = i;
-            sectionEnd = lines.size();
-            for (size_t j = i + 1; j < lines.size(); ++j) {
-                std::wstring next = trim(lines[j]);
-                if (!next.empty() && next.front() == L'[') {
-                    sectionEnd = j;
-                    break;
-                }
+        std::wstring line = text.substr(pos, end - pos);
+        pos = end;
+        if (pos < text.size() && text[pos] == L'\r') ++pos;
+        if (pos < text.size() && text[pos] == L'\n') ++pos;
+        auto clean = trim(line);
+        if (!clean.empty() && clean.front() == L'[' && clean.back() == L']')
+            section = lower(trim(clean.substr(1, clean.size() - 2)));
+        auto equals = clean.find(L'=');
+        if ((section.empty() || section == L"claudeprotect") && !clean.empty() &&
+            clean[0] != L';' && clean[0] != L'#' && equals != std::wstring::npos) {
+            auto key = lower(trim(clean.substr(0, equals)));
+            auto entry = values.find(key);
+            if (entry != values.end()) {
+                // Update every occurrence because the INI parser uses the last value.
+                line = clean.substr(0, equals + 1) + L"\"" + entry->second + L"\"";
+                remaining.erase(key);
             }
-            break;
         }
+        output += line + L"\r\n";
     }
-    if (sectionStart == lines.size()) {
-        lines.push_back(L"[ClaudeProtect]");
-        sectionStart = lines.size() - 1;
-        sectionEnd = lines.size();
+    if (!remaining.empty()) {
+        if (section != L"claudeprotect") output += L"[ClaudeProtect]\r\n";
+        for (const auto& entry : remaining) output += entry.first + L"=\"" + entry.second + L"\"\r\n";
     }
-
-    bool replaced = false;
-    for (size_t i = sectionStart + 1; i < sectionEnd; ++i) {
-        std::wstring line = trim(lines[i]);
-        if (line.empty() || line[0] == L';' || line[0] == L'#') continue;
-        auto equals = line.find(L'=');
-        if (equals == std::wstring::npos) continue;
-        if (lower(trim(line.substr(0, equals))) == lower(key)) {
-            lines[i] = key + L"=" + value;
-            replaced = true;
-            break;
-        }
-    }
-    if (!replaced) lines.insert(lines.begin() + sectionEnd, key + L"=" + value);
-
-    std::wstring output;
-    for (const auto& line : lines) output += line + L"\r\n";
-    return writeTextFile(iniPath, output, error);
+    return saveConfigText(baseDir, output, error);
 }
 
 bool prepareConfig(Config& config, std::wstring& error) {
@@ -508,19 +507,18 @@ bool prepareConfig(Config& config, std::wstring& error) {
     config.logPath = joinPath(config.baseDir, L"ClaudeProtect.log");
     config.probePath = joinPath(config.baseDir, L"EnvironmentProbe.exe");
 
-    if (config.lepDir.empty()) config.lepDir = L"lep";
-    if (!isAbsolutePath(config.lepDir)) config.lepDir = joinPath(config.baseDir, config.lepDir);
+    config.lepDir = joinPath(config.baseDir, L"lep");
 
     if (config.timezoneId.empty()) config.timezoneId = L"Pacific Standard Time";
     if (!timeZoneExists(config.timezoneId)) {
-        error = L"Unknown Windows time zone ID: \"" + config.timezoneId +
-                L"\". Use an ID such as UTC, China Standard Time, or Tokyo Standard Time.";
+        error = L"Timezone（Windows 时区 ID）无效，\"" + config.timezoneId +
+                L"\"。请从时区列表选择，或填写有效的 Windows 时区 ID。";
         return false;
     }
 
     if (config.locale.empty()) config.locale = L"en-US";
     if (!IsValidLocaleName(config.locale.c_str())) {
-        error = L"Invalid locale name: \"" + config.locale + L"\". Use a BCP-47 name such as en-US.";
+        error = L"Locale（区域代码）无效，\"" + config.locale + L"\"。请填写 en-US、zh-CN 等 BCP-47 代码。";
         return false;
     }
     config.localeId = LocaleNameToLCID(config.locale.c_str(), 0);
@@ -554,22 +552,20 @@ bool prepareConfig(Config& config, std::wstring& error) {
     }
     if (!config.fontCharset) config.fontCharset = charsetForCodePage(config.ansiCodePage);
 
-    if (config.timezoneIana.empty()) {
-        config.timezoneIana = mapWindowsTimeZoneToIana(config.timezoneId);
-        if (config.timezoneIana.empty())
-            config.warnings.push_back(L"No IANA mapping for " + config.timezoneId);
-    }
+    config.timezoneIana = mapWindowsTimeZoneToIana(config.timezoneId);
+    if (config.timezoneIana.empty())
+        config.warnings.push_back(L"No IANA mapping for " + config.timezoneId);
     config.timezonePosix = mapWindowsTimeZoneToPosix(config.timezoneId);
     if (config.timezonePosix.empty())
         config.warnings.push_back(L"Cannot derive POSIX TZ for " + config.timezoneId +
                                   L"; TZ will not be set for children.");
 
     if (config.standardName.size() >= 32 || config.daylightName.size() >= 32) {
-        error = L"StandardName/DaylightName must be shorter than 32 characters";
+        error = L"StandardName / DaylightName（标准时与夏令时名称）均不能超过 31 个 UTF-16 字符。";
         return false;
     }
     if (config.registryRedirectionMode > 2 || config.uiLanguageMode > 2) {
-        error = L"RegistryRedirectionMode and HookUILanguageMode must be 0..2";
+        error = L"注册表重定向和界面语言模式必须为 0、1 或 2。";
         return false;
     }
     if (config.executable.empty()) {
@@ -653,6 +649,20 @@ std::wstring mapWindowsTimeZoneToIana(const std::wstring& id) {
         const wchar_t* iana;
     } table[] = {
         {L"UTC", L"Etc/UTC"},
+        {L"Dateline Standard Time", L"Etc/GMT+12"},
+        {L"UTC-11", L"Pacific/Pago_Pago"},
+        {L"US Mountain Standard Time", L"America/Phoenix"},
+        {L"Central Standard Time (Mexico)", L"America/Mexico_City"},
+        {L"SA Western Standard Time", L"America/Puerto_Rico"},
+        {L"UTC-02", L"America/Noronha"},
+        {L"Cape Verde Standard Time", L"Atlantic/Cape_Verde"},
+        {L"Azores Standard Time", L"Atlantic/Azores"},
+        {L"Greenwich Standard Time", L"Atlantic/Reykjavik"},
+        {L"FLE Standard Time", L"Europe/Helsinki"},
+        {L"E. Australia Standard Time", L"Australia/Brisbane"},
+        {L"Fiji Standard Time", L"Pacific/Fiji"},
+        {L"Tonga Standard Time", L"Pacific/Tongatapu"},
+        {L"Line Islands Standard Time", L"Pacific/Kiritimati"},
         {L"China Standard Time", L"Asia/Shanghai"},
         {L"Taipei Standard Time", L"Asia/Taipei"},
         {L"Tokyo Standard Time", L"Asia/Tokyo"},

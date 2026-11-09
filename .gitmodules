@@ -1,3 +1,5 @@
 [submodule "LocaleEmulatorPlus-Core"]
 	path = LocaleEmulatorPlus-Core
 	url = https://github.com/julixian/LocaleEmulatorPlus-Core.git
+	# Integration changes are published in patches/lep/claude-protect.patch.
+	ignore = dirty

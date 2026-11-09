@@ -300,7 +300,7 @@ std::wstring Session::takeFailure() {
     return value;
 }
 
-bool Session::preflight(const Config& config, std::wstring& error) {
+bool Session::preflight(const Config& config, std::wstring& error, HANDLE cancelEvent) {
     if (config.preflight == L"off") return true;
     if (!fileExists(config.probePath)) {
         if (config.preflight == L"require") {
@@ -320,7 +320,7 @@ bool Session::preflight(const Config& config, std::wstring& error) {
         arguments += L" --expect-ui " + std::to_wstring(config.localeId & 0xFFFF);
     if (config.uiLanguageMode == 2) arguments += L" --expect-preferred";
     std::wstring tail;
-    int code = runProbe(config, arguments, probeLog, 20000, error, tail);
+    int code = runProbe(config, arguments, probeLog, 20000, error, tail, cancelEvent);
     if (code != 0) {
         if (error.empty())
             error = L"Isolation preflight failed (exit " + std::to_wstring(code) + L"). See " +
@@ -333,7 +333,7 @@ bool Session::preflight(const Config& config, std::wstring& error) {
     return true;
 }
 
-bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& error) {
+bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& error, HANDLE cancelEvent) {
     error.clear();
     if (active_) {
         error = L"A managed session is already running";
@@ -383,7 +383,7 @@ bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& 
             config_.warnings.push_back(warning);
             logLine(config_.logPath, L"warning: " + warning);
         }
-        if (!preflight(config_, error)) return false;
+        if (!preflight(config_, error, cancelEvent)) return false;
         if (!lep_.load(joinPath(config_.lepDir, L"LoaderDll_x64.dll"), error, warning))
             return false;
         if (!warning.empty()) logLine(config_.logPath, L"warning: " + warning);
@@ -396,6 +396,10 @@ bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& 
         logLine(config_.logPath, L"verification disabled (direct diagnostic mode)");
     }
 
+    if (cancelEvent && WaitForSingleObject(cancelEvent, 0) == WAIT_OBJECT_0) {
+        error = L"操作已取消。";
+        return false;
+    }
     Handle job;
     if (!createJob(job, error)) return false;
 
@@ -718,7 +722,7 @@ void Session::stop(const std::wstring& reason) {
 
 int Session::runProbe(const Config& config, const std::wstring& arguments,
                       const std::wstring& probeLogPath, DWORD timeoutMs, std::wstring& error,
-                      std::wstring& outputTail) {
+                      std::wstring& outputTail, HANDLE cancelEvent) {
     error.clear();
     outputTail.clear();
     lastProbeLog_ = probeLogPath;
@@ -765,7 +769,7 @@ int Session::runProbe(const Config& config, const std::wstring& arguments,
     lepConfig.registryRedirectionMode = config.registryRedirectionMode;
     lepConfig.uiLanguageMode = config.uiLanguageMode;
     LONG status = loader.createSuspended(lepConfig, config.probePath.c_str(), &command[0],
-                                         workingDirectory.c_str(), CREATE_UNICODE_ENVIRONMENT,
+                                         workingDirectory.c_str(), CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
                                          &startup, &info, environment.data(), error);
     if (status < 0) return -1;
     Handle process(info.hProcess);
@@ -780,9 +784,14 @@ int Session::runProbe(const Config& config, const std::wstring& arguments,
         return -1;
     }
 
-    DWORD wait = WaitForSingleObject(process, timeoutMs);
+    HANDLE waits[] = {process, cancelEvent};
+    DWORD wait = cancelEvent ? WaitForMultipleObjects(2, waits, FALSE, timeoutMs)
+                            : WaitForSingleObject(process, timeoutMs);
     DWORD exitCode = 0;
-    if (wait == WAIT_TIMEOUT) {
+    if (wait == WAIT_OBJECT_0 + 1) {
+        error = L"操作已取消。";
+        exitCode = (DWORD)-1;
+    } else if (wait == WAIT_TIMEOUT) {
         error = L"Probe timed out after " + std::to_wstring(timeoutMs) + L" ms";
         exitCode = (DWORD)-1;
     } else if (wait == WAIT_FAILED) {

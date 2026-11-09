@@ -35,7 +35,6 @@ if (-not (Test-Path $ini)) { & $exe --check | Out-Null }
 Copy-Item $ini $backup -Force
 try {
     Set-IniValue $ini 'Timezone' $Timezone
-    Set-IniValue $ini 'TimezoneIana' $IanaTimezone
     Set-IniValue $ini 'Locale' $Locale
 
     Remove-Item -Force $log -ErrorAction SilentlyContinue

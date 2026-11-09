@@ -30,3 +30,6 @@ __pycache__/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local agent instructions
+AGENTS.md

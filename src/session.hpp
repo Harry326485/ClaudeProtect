@@ -22,7 +22,8 @@ public:
     std::wstring statusText() const;
     std::wstring takeFailure();
 
-    bool start(const Config& config, const LaunchSpec& spec, std::wstring& error);
+    bool start(const Config& config, const LaunchSpec& spec, std::wstring& error,
+               HANDLE cancelEvent = nullptr);
     void poll();
     void stop(const std::wstring& reason);
 
@@ -30,11 +31,11 @@ public:
     // probe exit code, or -1 on setup/timeout failure.
     int runProbe(const Config& config, const std::wstring& arguments,
                  const std::wstring& probeLogPath, DWORD timeoutMs, std::wstring& error,
-                 std::wstring& outputTail);
+                 std::wstring& outputTail, HANDLE cancelEvent = nullptr);
     const std::wstring& lastProbeLog() const { return lastProbeLog_; }
 
 private:
-    bool preflight(const Config& config, std::wstring& error);
+    bool preflight(const Config& config, std::wstring& error, HANDLE cancelEvent);
     bool hasLepLog(DWORD pid);
     bool isManagedImagePath(const std::wstring& path) const;
     bool handleLepFailure(DWORD childPid, const std::wstring& line);

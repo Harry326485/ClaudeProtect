@@ -1,4 +1,4 @@
-param([switch]$SkipBuild)
+param([switch]$SkipBuild, [string]$Gcc = 'g++')
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -17,7 +17,7 @@ function Read-Log {
 }
 
 if (-not $SkipBuild) {
-    & (Join-Path $PSScriptRoot 'build.ps1') | Out-Host
+    & (Join-Path $PSScriptRoot 'build.ps1') -Gcc $Gcc | Out-Host
 }
 
 Assert-True (Test-Path $exe) "Missing $exe"
@@ -126,5 +126,16 @@ if (Test-Path (Join-Path $build 'lep\LoaderDll_x64.dll')) {
 } else {
     Write-Host 'LEP DLLs are absent; skipping LEP self-test.'
 }
+
+Write-Host 'Background operation cancellation and cleanup'
+$cancelTest = Join-Path $build 'session-cancellation-test.exe'
+& $Gcc -std=c++17 -O2 -Wall -Wextra -Wno-cast-function-type -static -municode `
+    (Join-Path $root 'tests/session-cancellation.cpp') (Join-Path $root 'src/config.cpp') `
+    (Join-Path $root 'src/session.cpp') (Join-Path $root 'src/lep.cpp') -ladvapi32 -o $cancelTest
+Assert-True ($LASTEXITCODE -eq 0) 'Cancellation test build failed'
+& $cancelTest $build
+Assert-True ($LASTEXITCODE -eq 0) 'Cancellation test failed'
+Assert-True (@(Get-Process EnvironmentProbe -ErrorAction SilentlyContinue).Count -eq 0) `
+    'Probe process survived background cancellation'
 
 Write-Host 'All supervisor tests passed.'

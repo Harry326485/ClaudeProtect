@@ -1,9 +1,12 @@
 #include "config.hpp"
-#include "editor.hpp"
+#include "ui.hpp"
 #include "session.hpp"
 #include "resource.h"
 #include "win.hpp"
-#include <commdlg.h>
+#include <objbase.h>
+#include <future>
+#include <memory>
+#include <chrono>
 #include <shellapi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -12,7 +15,7 @@
 namespace {
 
 constexpr UINT TrayMessage = WM_APP + 1;
-enum MenuId { MenuStart = 100, MenuStop, MenuSelfTest, MenuChoose, MenuSettings, MenuLogs,
+enum MenuId { MenuStart = 100, MenuStop, MenuSelfTest, MenuPanel, MenuSettings,
               MenuLepLogs, MenuExit };
 
 std::wstring baseDir;
@@ -22,9 +25,18 @@ NOTIFYICONDATAW iconData{};
 HICON stoppedIcon = nullptr;
 HICON runningIcon = nullptr;
 Config config;
-Session session;
+std::unique_ptr<Session> session = std::make_unique<Session>();
+struct OperationResult {
+    Config config;
+    bool configurationReady = false;
+    std::unique_ptr<Session> started;
+    std::wstring error, message;
+};
+std::future<OperationResult> operation;
+Handle operationCancel;
+bool testing = false;
 std::wstring configError;
-bool selfTestBusy = false;
+
 
 std::wstring quoteArgument(const std::wstring& value) {
     std::wstring out = L"\"";
@@ -86,11 +98,11 @@ void consoleWrite(const std::wstring& text, bool error = false) {
 
 void showError(const std::wstring& text) {
     logLine(logPath, L"ERROR " + text);
-    if (windowHandle) MessageBoxW(windowHandle, text.c_str(), L"ClaudeProtect", MB_OK | MB_ICONERROR);
+    if (windowHandle && !showUiNotice(text, true)) MessageBoxW(windowHandle, text.c_str(), L"ClaudeProtect", MB_OK | MB_ICONERROR);
 }
 
 void showInfo(const std::wstring& text) {
-    if (windowHandle) MessageBoxW(windowHandle, text.c_str(), L"ClaudeProtect", MB_OK | MB_ICONINFORMATION);
+    if (windowHandle && !showUiNotice(text, false)) MessageBoxW(windowHandle, text.c_str(), L"ClaudeProtect", MB_OK | MB_ICONINFORMATION);
 }
 
 bool ensureConfigFile(std::wstring& error) {
@@ -138,9 +150,46 @@ std::wstring probeArguments(const Config& cfg, DWORD seconds) {
     return arguments;
 }
 
-void openText(const std::wstring& path, bool settings = false) {
+void startClaude();
+void runSelfTest();
+void updateIcon();
+
+void reloadConfig() {
+    Config fresh;
     std::wstring error;
-    if (!openTextWindow(windowHandle, path, settings, error)) showError(error);
+    if (loadAndPrepare(fresh, error)) {
+        config = fresh;
+        configError.clear();
+    } else {
+        configError = error;
+    }
+    updateIcon();
+}
+
+void openPanel(UiPage page) {
+    UiActions actions;
+    actions.status = [] {
+        UiStatus status;
+        status.active = session->active();
+        status.processCount = session->active() ? session->processCount() : 0;
+        status.timezone = config.timezoneId;
+        status.locale = config.locale;
+        status.verify = config.verifyMode;
+        status.busy = operation.valid();
+        status.busyLabel = testing ? L"正在执行环境自检" : L"正在预检并启动 Claude";
+        status.detail = configError;
+        return status;
+    };
+    actions.command = [](UiCommand command) {
+        switch (command) {
+        case UiCommand::Start: startClaude(); break;
+        case UiCommand::Stop: if (!operation.valid()) session->stop(L"panel-stop"); updateIcon(); break;
+        case UiCommand::SelfTest: runSelfTest(); break;
+        case UiCommand::Reload: reloadConfig(); break;
+        }
+    };
+    std::wstring error;
+    if (!openControlWindow(baseDir, page, actions, error)) showError(error);
 }
 
 void openFolder(const std::wstring& path) {
@@ -152,14 +201,18 @@ void openFolder(const std::wstring& path) {
 
 void updateIcon() {
     if (!iconData.hWnd) return;
-    iconData.hIcon = session.active() ? runningIcon : stoppedIcon;
+    auto icon = session->active() ? runningIcon : stoppedIcon;
     std::wstring tip = L"ClaudeProtect - ";
-    if (!configError.empty())
-        tip += L"configuration error";
-    else if (session.active())
-        tip += L"Claude running (" + std::to_wstring(session.processCount()) + L" processes)";
+    if (operation.valid())
+        tip += testing ? L"正在执行环境自检" : L"正在启动";
+    else if (!configError.empty())
+        tip += L"配置需要检查";
+    else if (session->active())
+        tip += L"受监管运行中（" + std::to_wstring(session->processCount()) + L" 个进程）";
     else
-        tip += L"stopped";
+        tip += L"待机";
+    if (iconData.hIcon == icon && tip == iconData.szTip) return;
+    iconData.hIcon = icon;
     wcsncpy(iconData.szTip, tip.c_str(), 127);
     iconData.szTip[127] = 0;
     Shell_NotifyIconW(NIM_MODIFY, &iconData);
@@ -167,8 +220,8 @@ void updateIcon() {
 
 std::wstring lepStatus() {
     std::wstring error, warning;
-    if (!checkLepFiles(config, error, warning)) return L"LEP missing";
-    return warning.empty() ? L"LEP ready" : L"LEP ready (x86 pair missing)";
+    if (!checkLepFiles(config, error, warning)) return L"LEP 组件缺失";
+    return warning.empty() ? L"LEP 已就绪" : L"LEP 已就绪（缺少 x86 组件）";
 }
 
 void showMenu() {
@@ -181,25 +234,24 @@ void showMenu() {
         configError = previewError;
     }
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (session.active() ? MF_GRAYED : 0), MenuStart,
-                L"Start Claude Desktop");
-    AppendMenuW(menu, MF_STRING | (!session.active() ? MF_GRAYED : 0), MenuStop,
-                L"Stop Claude Desktop");
+    AppendMenuW(menu, MF_STRING | ((session->active() || operation.valid()) ? MF_GRAYED : 0), MenuStart,
+                L"启动 Claude Desktop");
+    AppendMenuW(menu, MF_STRING | ((!session->active() || operation.valid()) ? MF_GRAYED : 0), MenuStop,
+                L"停止会话");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     std::wstring status = configError.empty()
-                              ? L"Virtualization: " + config.timezoneId + L" / " + config.locale +
+                              ? L"虚拟环境  " + config.timezoneId + L" / " + config.locale +
                                     L" - " + lepStatus()
-                              : L"Configuration error - edit settings";
+                              : L"配置有误 · 请打开设置检查";
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (session.active() ? MF_GRAYED : 0), MenuSelfTest,
-                L"Run isolation self-test");
-    AppendMenuW(menu, MF_STRING, MenuChoose, L"Choose Claude Desktop executable...");
-    AppendMenuW(menu, MF_STRING, MenuSettings, L"Edit settings...");
-    AppendMenuW(menu, MF_STRING, MenuLogs, L"Open log");
-    AppendMenuW(menu, MF_STRING, MenuLepLogs, L"Open LEP logs");
+    AppendMenuW(menu, MF_STRING | ((session->active() || operation.valid()) ? MF_GRAYED : 0), MenuSelfTest,
+                L"运行环境自检");
+    AppendMenuW(menu, MF_STRING, MenuPanel, L"打开控制面板");
+    AppendMenuW(menu, MF_STRING, MenuSettings, L"设置…");
+    AppendMenuW(menu, MF_STRING, MenuLepLogs, L"打开 LEP 日志目录");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, MenuExit, L"Exit ClaudeProtect");
+    AppendMenuW(menu, MF_STRING, MenuExit, L"退出 ClaudeProtect");
 
     POINT point;
     GetCursorPos(&point);
@@ -209,103 +261,80 @@ void showMenu() {
     DestroyMenu(menu);
 }
 
-void startClaude() {
-    Config fresh;
-    std::wstring error;
-    if (!loadAndPrepare(fresh, error)) {
-        configError = error;
-        showError(error);
-        return;
-    }
-    if (fresh.executable.empty() || !fileExists(fresh.executable)) {
-        auto candidates = discoverClaudeExecutables();
-        if (!candidates.empty()) fresh.executable = candidates.front();
-    }
-    if (fresh.executable.empty()) {
-        showError(L"Claude Desktop was not found. Use \"Choose Claude Desktop executable...\".");
-        return;
-    }
-    LaunchSpec spec;
-    spec.executable = fresh.executable;
-    spec.arguments = fresh.extraArguments;
-    spec.claudeDesktop = isClaudeDesktopPath(fresh.executable, fresh.executable);
-    spec.useLep = true;
-    if (!session.start(fresh, spec, error)) {
-        showError(error);
-        return;
-    }
-    config = fresh;
-    configError.clear();
+void beginOperation(bool selfTest) {
+    if (operation.valid() || session->active()) return;
+    operationCancel.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!operationCancel.h) { showError(L"无法创建后台操作，" + winErrorText(GetLastError())); return; }
+    testing = selfTest;
+    HANDLE cancel = operationCancel;
+    operation = std::async(std::launch::async, [selfTest, cancel] {
+        OperationResult result;
+        if (!loadAndPrepare(result.config, result.error)) return result;
+        result.configurationReady = true;
+        auto& fresh = result.config;
+        if (!selfTest && (fresh.executable.empty() || !fileExists(fresh.executable))) {
+            auto candidates = discoverClaudeExecutables();
+            if (!candidates.empty()) fresh.executable = candidates.front();
+        }
+        auto worker = std::make_unique<Session>();
+        if (!selfTest) {
+            if (fresh.executable.empty()) {
+                result.error = L"未找到 Claude Desktop，请在“启动与路径”中选择可执行文件。";
+                return result;
+            }
+            LaunchSpec spec;
+            spec.executable = fresh.executable;
+            spec.arguments = fresh.extraArguments;
+            spec.claudeDesktop = isClaudeDesktopPath(fresh.executable, fresh.executable);
+            spec.useLep = true;
+            if (worker->start(fresh, spec, result.error, cancel)) result.started = std::move(worker);
+            return result;
+        }
+        std::wstring warning;
+        if (!checkLepFiles(fresh, result.error, warning)) return result;
+        auto probeLog = joinPath(baseDir, L"selftest.log");
+        std::wstring tail;
+        int code = worker->runProbe(fresh, probeArguments(fresh, 0), probeLog, 30000, result.error, tail, cancel);
+        if (code < 0) return result;
+        if (code == 0) {
+            result.message = L"环境自检通过。\n\n时区  " + fresh.timezoneId +
+                L"\n语言与区域  " + fresh.locale +
+                L"\n\n父子进程的环境与 Job 成员关系检查均已通过。\n完整报告  " + probeLog;
+        } else {
+            result.error = L"环境自检失败（退出码 " + std::to_wstring(code) + L"）。\n完整报告  " + probeLog;
+        }
+        return result;
+    });
     updateIcon();
 }
 
-void runSelfTest() {
-    if (selfTestBusy) return;
-    Config fresh;
-    std::wstring error;
-    if (!loadAndPrepare(fresh, error)) {
-        showError(error);
-        return;
+void startClaude() { beginOperation(false); }
+void runSelfTest() { beginOperation(true); }
+
+void pollOperation() {
+    if (!operation.valid() || operation.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+    try {
+        auto result = operation.get();
+        operationCancel.reset();
+        if (result.configurationReady) {
+            config = result.config;
+            configError.clear();
+        } else configError = result.error;
+        if (result.started) session = std::move(result.started);
+        updateIcon();
+        if (!result.error.empty()) showError(result.error);
+        else if (!result.message.empty()) { logLine(logPath, result.message); showInfo(result.message); }
+    } catch (const std::exception& error) {
+        operationCancel.reset();
+        showError(L"后台操作失败，" + widen(error.what()));
     }
-    config = fresh;
-    configError.clear();
-    std::wstring lepError, lepWarning;
-    if (!checkLepFiles(fresh, lepError, lepWarning)) {
-        showError(lepError);
-        return;
-    }
-    std::wstring probeLog = joinPath(baseDir, L"selftest.log");
-    DeleteFileW(probeLog.c_str());
-    selfTestBusy = true;
-    std::wstring tail;
-    int code = session.runProbe(fresh, probeArguments(fresh, 0), probeLog, 30000, error, tail);
-    selfTestBusy = false;
-    if (code < 0) {
-        showError(error.empty() ? L"Self-test could not start" : error);
-        return;
-    }
-    std::wstring message = code == 0 ? L"Isolation self-test passed."
-                                     : L"Isolation self-test failed (exit " +
-                                           std::to_wstring(code) + L").";
-    message += L"\n\n" + probeLog;
-    if (!tail.empty()) {
-        if (tail.size() > 1800) tail = tail.substr(tail.size() - 1800);
-        message += L"\n\n" + tail;
-    }
-    logLine(logPath, message);
-    showInfo(message);
 }
 
-void chooseExecutable() {
-    wchar_t path[32768]{};
-    OPENFILENAMEW dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = windowHandle;
-    dialog.lpstrFilter = L"Claude Desktop (claude.exe)\0claude.exe\0Executables (*.exe)\0*.exe\0\0";
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = 32768;
-    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameW(&dialog)) return;
-    if (!isClaudeDesktopPath(path, L"")) {
-        if (MessageBoxW(windowHandle,
-                        L"The selected file does not look like Claude Desktop. Save it anyway?",
-                        L"ClaudeProtect", MB_YESNO | MB_ICONQUESTION) != IDYES)
-            return;
-    }
-    std::wstring error;
-    if (!updateIniValue(joinPath(baseDir, L"ClaudeProtect.ini"), L"Executable", path, error)) {
-        showError(error);
-        return;
-    }
-    Config fresh;
-    if (loadAndPrepare(fresh, error)) {
-        config = fresh;
-        configError.clear();
-    } else {
-        configError = error;
-        showError(error);
-    }
-    updateIcon();
+void cancelOperation() {
+    if (!operation.valid()) return;
+    SetEvent(operationCancel);
+    try { operation.get(); } catch (const std::exception&) {}
+    operationCancel.reset();
 }
 
 void exitTray() {
@@ -322,30 +351,31 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     case TrayMessage:
         if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU)
             showMenu();
-        else if (lParam == WM_LBUTTONDBLCLK)
-            PostMessageW(hwnd, WM_COMMAND, MenuStart, 0);
+        else if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK)
+            PostMessageW(hwnd, WM_COMMAND, MenuPanel, 0);
         return 0;
     case WM_TIMER: {
-        session.poll();
-        std::wstring failure = session.takeFailure();
+        pollOperation();
+        session->poll();
+        std::wstring failure = session->takeFailure();
         updateIcon();
-        if (!failure.empty()) showError(L"Managed session stopped: " + failure);
+        if (!failure.empty()) showError(L"受监管会话已停止，" + failure);
         return 0;
     }
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case MenuStart: startClaude(); break;
-        case MenuStop: session.stop(L"tray-stop"); updateIcon(); break;
+        case MenuStop: if (!operation.valid()) session->stop(L"tray-stop"); updateIcon(); break;
         case MenuSelfTest: runSelfTest(); break;
-        case MenuChoose: chooseExecutable(); break;
-        case MenuSettings: openText(joinPath(baseDir, L"ClaudeProtect.ini"), true); break;
-        case MenuLogs: openText(logPath); break;
+        case MenuPanel: reloadConfig(); openPanel(UiPage::Overview); break;
+        case MenuSettings: openPanel(UiPage::Environment); break;
         case MenuLepLogs: openFolder(joinPath(config.lepDir, L"Log")); break;
         case MenuExit: exitTray(); break;
         }
         return 0;
     case WM_QUERYENDSESSION:
-        session.stop(L"session-end");
+        cancelOperation();
+        session->stop(L"session-end");
         return TRUE;
     case WM_ENDSESSION:
         if (wParam) DestroyWindow(hwnd);
@@ -354,7 +384,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
-        session.stop(L"supervisor-exit");
+        closeControlWindow();
+        cancelOperation();
+        session->stop(L"supervisor-exit");
         Shell_NotifyIconW(NIM_DELETE, &iconData);
         PostQuitMessage(0);
         return 0;
@@ -371,7 +403,7 @@ void printUsage() {
         L"Tray mode: run without arguments.\r\n"
         L"\r\n"
         L"Commands:\r\n"
-        L"  --edit-settings         Open the built-in settings editor\r\n"
+        L"  --edit-settings         Open the graphical settings panel\r\n"
         L"  --check                 Validate configuration, LEP files and discovery.\r\n"
         L"  --print-config          Print resolved configuration and LEPB fields.\r\n"
         L"  --discover              List discovered Claude Desktop executables.\r\n"
@@ -596,12 +628,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
 
     Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\ClaudeProtect.Tray"));
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (editSettings) {
-            HWND existing = FindWindowW(L"ClaudeProtectTray", L"ClaudeProtect");
-            if (existing) PostMessageW(existing, WM_COMMAND, MenuSettings, 0);
-        }
+        HWND existing = FindWindowW(L"ClaudeProtectTray", L"ClaudeProtect");
+        if (existing) PostMessageW(existing, WM_COMMAND, editSettings ? MenuSettings : MenuPanel, 0);
         return 0;
     }
+
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     logLine(logPath, L"tray started");
     int iconWidth = GetSystemMetrics(SM_CXSMICON);
@@ -630,21 +662,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     iconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     iconData.uCallbackMessage = TrayMessage;
     iconData.hIcon = stoppedIcon;
-    wcscpy(iconData.szTip, L"ClaudeProtect - stopped");
+    wcscpy(iconData.szTip, L"ClaudeProtect - 待机");
     if (!Shell_NotifyIconW(NIM_ADD, &iconData)) {
         logLine(logPath, L"tray icon creation failed");
         DestroyWindow(windowHandle);
         return 1;
     }
     SetTimer(windowHandle, 1, 500, nullptr);
-    if (editSettings) PostMessageW(windowHandle, WM_COMMAND, MenuSettings, 0);
+    PostMessageW(windowHandle, WM_COMMAND, editSettings ? MenuSettings : MenuPanel, 0);
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        if (translateTextWindowMessage(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    CoUninitialize();
     logLine(logPath, L"tray exited");
     return 0;
 }

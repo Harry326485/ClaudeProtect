@@ -9,8 +9,18 @@
 | `src/config.cpp` | UTF-8/UTF-16 INI reader, dynamic Claude Desktop discovery, Windows time zone validation, locale/LCID/code-page/font-charset resolution, path-based unmanaged-instance detection. |
 | `src/session.cpp` | Job Object creation with `KILL_ON_JOB_CLOSE`, LEP launch, probe preflight, runtime injection-record/log verification, Stop and main-exit cleanup. |
 | `src/main.cpp` | Tray UI and CLI (`--check`, `--print-config`, `--edit-settings`, `--discover`, `--selftest`, `--run`). |
-| `src/editor.cpp` | Built-in settings editor with validation/atomic save and read-only log viewer. |
+| `src/ui.cpp`, `ui/` | Window-scoped WebView2 host, embedded Chinese settings forms and a native executable file dialog. |
 | `src/probe.cpp` | Native observation probe for time zone, locale, UI language, code pages, Job membership, LEP Core presence, and child propagation. |
+
+## WebView2 interface
+
+The UI uses vanilla HTML/CSS/JavaScript embedded as an EXE resource. The build downloads the official SDK 1.0.2903.40 with a pinned checksum and copies its x64 loader and notices into the runtime directory. MinGW uses a minimal EventToken.h declaration to bridge its Windows headers.
+
+The host creates WebView2 only when a panel opens. Closing calls Close and releases all controller/environment references. Event callbacks hold weak references to the window state. Minimizing hides the controller and requests TrySuspend, restoring resumes it. A visible panel samples status once per second and sends only changed snapshots. There are no external UI resources or HTTP listener. The embedded page has a restrictive CSP, navigation is restricted to the initial bundled document, new windows and permission requests are blocked, and the native bridge accepts a fixed action/setting allowlist from that document.
+
+The raw settings form preserves empty/zero automatic values, legacy boolean aliases, unknown entries and comments. Atomic saving validates the candidate first and rejects a stale disk snapshot. Startup and environment self-tests run in a background future using a private Session, then transfer ownership on the UI thread. An event cancels probe waits on supervisor exit. The normal CLI backend remains independent of the WebView2 loader.
+
+The default window is 740×600 at 96 DPI (minimum 600×440); CSS uses compact typography and spacing without a scaling transform. The timezone selector contains curated city groups across each whole-hour offset from UTC−12 to UTC+14, with offsets and daylight labels read from the current year’s Windows rules on settings load. UTC−12 uses uninhabited Baker Island. Locale is a select control. Existing values outside either catalog remain visible as a disabled current option until the user chooses a replacement; simply opening the panel does not rewrite them. There is no log page or web bridge log-reading action.
 
 ## Launch sequence
 
@@ -33,16 +43,16 @@
 | --- | --- |
 | `Executable` | Claude Desktop executable. Empty triggers dynamic discovery. |
 | `Timezone` | Windows time zone ID required by LEP, e.g. `China Standard Time`, `Tokyo Standard Time`, `UTC`. |
-| `TimezoneIana` | Optional IANA name retained for configuration and diagnostics. Empty uses a small built-in mapping. The child `TZ` is derived as POSIX rules from the Windows time zone. |
-| `StandardName`, `DaylightName` | Optional LEP display-name overrides (max 31 chars). Empty uses the time zone registry names. |
+| `TimezoneIana` | Legacy INI override ignored; the diagnostic IANA name is always derived from the Windows time zone. The child `TZ` is derived as POSIX rules from the Windows time zone. |
+| `StandardName`, `DaylightName` | Legacy LEP display-name overrides (max 31 chars), no longer exposed in the UI. Empty uses the time zone registry names. |
 | `Locale` | BCP-47 locale, e.g. `en-US`, `ja-JP`, `zh-CN`. |
 | `AnsiCodePage`, `OemCodePage`, `FontCharset` | `0` derives from the locale. |
-| `RegistryRedirectionMode` | LEP mode 0..2; default 2. |
-| `HookUILanguageMode` | LEP mode 0..2; default 2 (MUI/NLS plus Win32 UI-language exports). |
+| `RegistryRedirectionMode` | 0 covers basic ACP/OEMCP/default-language queries, 1 adjusts NLS queries, 2 adds user region and preferred languages (default). |
+| `HookUILanguageMode` | 0 disables dedicated UI-language hooks, 1 covers Win32 UI-language exports, 2 adds native UI, MUI, preferred-language and WinRT hooks (default). |
 | `VerifyInjection` | `strict` stops the job when a managed job process has no LEP injection record/log; `warn` logs only; `off` disables. |
 | `VerifyGraceSeconds` | Age before a process is checked (default 8). |
 | `Preflight` | `auto`, `require`, or `off`. `auto` runs the probe when present. |
-| `LepDirectory` | Directory containing `LoaderDll_x64.dll` and `LocaleEmulatorPlus_x64.dll`; default `lep` beside the executable. |
+| `LepDirectory` | Legacy INI override ignored; both DLLs are loaded from the fixed `lep` directory beside the executable. |
 | `ExtraArguments` | Extra arguments passed to Claude Desktop. `--lang=<Locale>` is appended automatically unless this already contains a `--lang=` switch. |
 
 ## Failure containment

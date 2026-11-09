@@ -681,7 +681,7 @@ bool runChild(const Expectations& expectations, const std::wstring& childResult,
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION info{};
     if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, FALSE,
-                        CREATE_UNICODE_ENVIRONMENT, environment.data(),
+                        CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, environment.data(),
                         directory(selfPath()).c_str(), &startup, &info)) {
         childJson = L"CreateProcessW failed: " + winErrorText(GetLastError());
         exitCode = -1;

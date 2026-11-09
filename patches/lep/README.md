@@ -11,7 +11,7 @@ git submodule update --init --recursive
 pwsh -NoProfile -File scripts/prepare-lep.ps1
 ```
 
-`build-lep.ps1` 会自动调用准备脚本。脚本检查固定提交，完整补丁已应用时直接成功，存在冲突或部分应用时停止并提示检查。应用后子模块显示本地修改属于预期状态。
+`build-lep.ps1` 会自动调用准备脚本。脚本检查固定提交，完整补丁已应用时直接成功，存在冲突或部分应用时停止并提示检查。主仓库通过 `.gitmodules` 的 `ignore = dirty` 忽略应用补丁后的子模块工作区状态，固定提交引用仍受跟踪。检查本地 LEP 改动时使用 `git -C LocaleEmulatorPlus-Core status` 和 `git -C LocaleEmulatorPlus-Core diff`。
 
 ## 维护
 

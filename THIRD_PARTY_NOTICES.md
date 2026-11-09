@@ -18,10 +18,18 @@ LEP 的 LGPL 附加条款位于 [LICENSES/LGPL-3.0.txt](LICENSES/LGPL-3.0.txt)�
 
 Claude 的商标权归其权利人所有。
 
+## Microsoft WebView2
+
+界面使用 Microsoft Edge WebView2 Evergreen Runtime。构建时从 [NuGet 官方包](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2903.40) 取得 SDK 1.0.2903.40，校验 SHA-256 后使用其公开接口头文件和 x64 WebView2Loader.dll。SDK 许可证与通知见 [LICENSES/WebView2-SDK.txt](LICENSES/WebView2-SDK.txt) 和 [LICENSES/WebView2-NOTICE.txt](LICENSES/WebView2-NOTICE.txt)，构建脚本会将它们复制到运行目录。Evergreen Runtime 由 Microsoft 单独提供与更新。
+
+## picojson
+
+`third_party/picojson/picojson.h` 来自 [kazuho/picojson v1.3.0](https://github.com/kazuho/picojson/tree/v1.3.0)，用于 WebView2 消息的 JSON 解析与序列化。原始版权和 BSD-2-Clause 许可全文保留在头文件开头，也见 [许可证全文](LICENSES/picojson-BSD-2-Clause.txt)，构建时复制到运行目录。
+
 ## 源码与二进制分发
 
 本仓库通过子模块引用上游，另行保存全部集成补丁。使用者需初始化子模块并应用补丁才能获得本项目使用的完整 LEP 源码。
 
-分发 LEP DLL 或组合运行包时，应保留适用版权声明与许可证，并按相应条款提供确切版本的对应源码、修改及构建所需材料。构建脚本会将 LEP 的两份许可证复制到本地 `build/lep/`。源码 Git 引用与补丁需要随对应二进制版本一起维护。
+分发 LEP DLL 或组合运行包时，应保留适用版权声明与许可证，并按相应条款提供确切版本的对应源码、修改及构建所需材料。构建脚本会将 LEP 的两份许可证复制到本地 `build/lep/`。
 
-LEP 上游仓库还包含历史工具链材料，适用各自的分发条款。ClaudeProtect 的本地构建输出与工具链不纳入主仓库提交。
+LEP 上游仓库还包含历史工具链材料，适用各自的分发条款。

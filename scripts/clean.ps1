@@ -28,7 +28,8 @@ foreach ($process in @(Get-Process ClaudeProtect, EnvironmentProbe -ErrorAction 
 
 if (Test-Path -LiteralPath $build) {
     foreach ($item in Get-ChildItem -LiteralPath $build -Force) {
-        if ($item.Name -in @('ClaudeProtect.exe', 'EnvironmentProbe.exe', 'lep', 'sdk-overlay') -or
+        if ($item.Name -in @('ClaudeProtect.exe', 'EnvironmentProbe.exe', 'WebView2Loader.dll',
+            'WebView2-LICENSE.txt', 'WebView2-NOTICE.txt', 'picojson-LICENSE.txt', 'lep', 'sdk-overlay') -or
             $item.Name -like 'ClaudeProtect.ini*') { continue }
         $targets.Add($item.FullName)
     }

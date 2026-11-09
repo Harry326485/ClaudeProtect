@@ -2,3 +2,5 @@
 
 IDI_CLAUDE_STOPPED ICON "assets/claude-stopped.ico"
 IDI_CLAUDE_RUNNING ICON "assets/claude-running.ico"
+IDR_UI RCDATA "build/ui.html"
+1 24 "src/app.manifest"
