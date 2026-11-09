@@ -1,5 +1,6 @@
 #include "editor.hpp"
 #include "win.hpp"
+#include "resource.h"
 
 namespace {
 HWND settingsWindow = nullptr;
@@ -106,6 +107,7 @@ bool openTextWindow(HWND owner, const std::wstring& path, bool settings, std::ws
     WNDCLASSW wc{};
     wc.lpfnWndProc = editorProc;
     wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(IDI_CLAUDE_STOPPED));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"ClaudeProtectTextWindow";

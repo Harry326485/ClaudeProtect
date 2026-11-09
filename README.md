@@ -8,7 +8,7 @@ ClaudeProtect 使用 LocaleEmulatorPlus-Core（LEP）提供进程内时区、区
 
 ## 功能
 
-- 托盘启动、停止 Claude Desktop，内置配置编辑器和只读日志窗口。
+- 托盘启动、停止 Claude Desktop，内置配置编辑器和只读日志窗口。待机显示灰色 Claude 图标，受监管会话运行时显示橙色 Claude 图标及蓝色盾牌。
 - 动态发现 Claude Desktop 安装路径，按路径区分 Claude Desktop 与 Claude Code。
 - 配置 Windows 时区、BCP-47 区域、代码页及首选语言。
 - 启动前运行父子进程探针，运行中检查 LEP 注入记录和初始化日志。
@@ -21,10 +21,10 @@ ClaudeProtect 使用 LocaleEmulatorPlus-Core（LEP）提供进程内时区、区
 
 - Windows x64。历史验证使用的 Claude Desktop 为 4.29.0，其他版本需要自行验证。
 - Git 和 PowerShell 7（`pwsh`）。
-- MinGW-w64 的 x64 `g++`，支持 C++17。已验证 GCC 8.1。
+- MinGW-w64 的 x64 `g++` 和 `windres`，支持 C++17。已验证 GCC 8.1。
 - 构建 LEP 还需要 Python 3.10+、MSVC x64/x86 C++ 工具链和 Windows SDK。已验证 MSVC 14.51 与 SDK 10.0.26100。
 
-请将 `git`、`g++`、`python`、`pwsh` 加入 `PATH`。MSVC 和 SDK 由脚本自动发现，也可通过构建参数指定。
+请将 `git`、`g++`、`windres`、`python`、`pwsh` 加入 `PATH`。MSVC 和 SDK 由脚本自动发现，也可通过构建参数指定。
 
 ## 从源码构建
 

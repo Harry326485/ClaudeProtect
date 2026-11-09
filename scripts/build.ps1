@@ -1,7 +1,8 @@
 param(
     [switch]$Clean,
     [switch]$BuildLep,
-    [string]$Gcc = 'g++'
+    [string]$Gcc = 'g++',
+    [string]$Windres = 'windres'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,10 +27,13 @@ Write-Host 'Building EnvironmentProbe.exe'
 if ($LASTEXITCODE) { throw 'Probe build failed' }
 
 Write-Host 'Building ClaudeProtect.exe'
+$resources = Join-Path $build 'resources.o'
+& $Windres -I $root (Join-Path $root 'src/resources.rc') -O coff -o $resources
+if ($LASTEXITCODE) { throw 'Icon resource build failed' }
 $traySources = @(
     'src/main.cpp', 'src/config.cpp', 'src/session.cpp', 'src/lep.cpp', 'src/editor.cpp'
 ) | ForEach-Object { Join-Path $root $_ }
-& $Gcc @flags -mwindows @traySources -o (Join-Path $build 'ClaudeProtect.exe') `
+& $Gcc @flags -mwindows @traySources $resources -o (Join-Path $build 'ClaudeProtect.exe') `
     -luser32 -lshell32 -lcomdlg32 -ladvapi32
 if ($LASTEXITCODE) { throw 'Tray build failed' }
 

@@ -12,6 +12,12 @@
 
 LEP 的 LGPL 附加条款位于 [LICENSES/LGPL-3.0.txt](LICENSES/LGPL-3.0.txt)，配套 GPL v3 全文也收录在主仓库 [LICENSE](LICENSE) 中。ClaudeProtect 自有代码采用该 GPL v3 许可证。
 
+## Claude 图标图形
+
+`assets/claude-stopped.svg`、`assets/claude-running.svg` 及对应 ICO 中的 Claude 图形改编自 Simple Icons 提供的 [Claude SVG](https://github.com/simple-icons/simple-icons/blob/develop/icons/claude.svg)，取得日期为 2026-11-09。原始图形按 CC0-1.0 提供，完整文本见 [LICENSES/CC0-1.0.txt](LICENSES/CC0-1.0.txt)。本项目调整了配色并在运行图标上增加盾牌。
+
+Claude 的商标权归其权利人所有。
+
 ## 源码与二进制分发
 
 本仓库通过子模块引用上游，另行保存全部集成补丁。使用者需初始化子模块并应用补丁才能获得本项目使用的完整 LEP 源码。

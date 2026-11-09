@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor.hpp"
 #include "session.hpp"
+#include "resource.h"
 #include "win.hpp"
 #include <commdlg.h>
 #include <shellapi.h>
@@ -18,6 +19,8 @@ std::wstring baseDir;
 std::wstring logPath;
 HWND windowHandle = nullptr;
 NOTIFYICONDATAW iconData{};
+HICON stoppedIcon = nullptr;
+HICON runningIcon = nullptr;
 Config config;
 Session session;
 std::wstring configError;
@@ -149,6 +152,7 @@ void openFolder(const std::wstring& path) {
 
 void updateIcon() {
     if (!iconData.hWnd) return;
+    iconData.hIcon = session.active() ? runningIcon : stoppedIcon;
     std::wstring tip = L"ClaudeProtect - ";
     if (!configError.empty())
         tip += L"configuration error";
@@ -324,8 +328,8 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     case WM_TIMER: {
         session.poll();
         std::wstring failure = session.takeFailure();
-        if (!failure.empty()) showError(L"Managed session stopped: " + failure);
         updateIcon();
+        if (!failure.empty()) showError(L"Managed session stopped: " + failure);
         return 0;
     }
     case WM_COMMAND:
@@ -600,9 +604,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     }
 
     logLine(logPath, L"tray started");
+    int iconWidth = GetSystemMetrics(SM_CXSMICON);
+    int iconHeight = GetSystemMetrics(SM_CYSMICON);
+    stoppedIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_CLAUDE_STOPPED),
+                                               IMAGE_ICON, iconWidth, iconHeight, LR_SHARED));
+    runningIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_CLAUDE_RUNNING),
+                                               IMAGE_ICON, iconWidth, iconHeight, LR_SHARED));
+    if (!stoppedIcon || !runningIcon) {
+        logLine(logPath, L"cannot load tray icon resources: " + winErrorText(GetLastError()));
+        return 1;
+    }
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = windowProc;
     windowClass.hInstance = instance;
+    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_CLAUDE_STOPPED));
     windowClass.lpszClassName = L"ClaudeProtectTray";
     if (!RegisterClassW(&windowClass)) return 1;
     windowHandle = CreateWindowW(windowClass.lpszClassName, L"ClaudeProtect", WS_OVERLAPPED, 0, 0,
@@ -614,7 +629,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     iconData.uID = 1;
     iconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     iconData.uCallbackMessage = TrayMessage;
-    iconData.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    iconData.hIcon = stoppedIcon;
     wcscpy(iconData.szTip, L"ClaudeProtect - stopped");
     if (!Shell_NotifyIconW(NIM_ADD, &iconData)) {
         logLine(logPath, L"tray icon creation failed");

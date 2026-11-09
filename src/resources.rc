@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDI_CLAUDE_STOPPED ICON "assets/claude-stopped.ico"
+IDI_CLAUDE_RUNNING ICON "assets/claude-running.ico"
