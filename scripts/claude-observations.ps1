@@ -1,5 +1,7 @@
 param(
     [int]$Seconds = 20,
+    [ValidateSet('desktop', 'science')][string]$Application = 'desktop',
+    [string]$BuildDirectory,
     [switch]$Direct,
     [switch]$KillSupervisor,
     [switch]$NoPreflight,
@@ -9,7 +11,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$build = Join-Path $root 'build'
+$build = if ($BuildDirectory) { [IO.Path]::GetFullPath($BuildDirectory) } else { Join-Path $root 'build' }
+$appName = if ($Application -eq 'science') { 'Claude Science' } else { 'Claude Desktop' }
 $exe = Join-Path $build 'ClaudeProtect.exe'
 $log = Join-Path $build 'ClaudeProtect.log'
 
@@ -40,7 +43,14 @@ public static class ClaudeProtectJobCheck {
 }
 "@
 
-function Get-ClaudeDesktopProcesses {
+function Get-ApplicationProcesses {
+    if ($Application -eq 'science') {
+        Get-CimInstance Win32_Process -Filter "Name='claude-science.exe'" |
+            Where-Object { $_.ExecutablePath -and
+                ($_.ExecutablePath -like '*\ClaudeScience\claude-science.exe' -or
+                 $_.ExecutablePath -like '*\.claude-science\electron\*\claude-science.exe') }
+        return
+    }
     Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='chrome-native-host.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.ExecutablePath -and
@@ -65,6 +75,7 @@ function Get-LepVerifiedPids {
     $verified = @{}
     if (-not (Test-Path $dir)) { return @() }
     foreach ($file in Get-ChildItem $dir -File -Filter '*.log.txt' -ErrorAction SilentlyContinue) {
+        if ($file.LastWriteTime -lt $startedAt) { continue }
         $text = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
         if (-not $text) { continue }
         foreach ($match in [regex]::Matches($text, 'create edge[^\r\n]*childPid=(\d+)[^\r\n]*injectStatus=0+')) {
@@ -83,36 +94,48 @@ function Get-LepVerifiedPids {
     return @($verified.Keys)
 }
 
-$existing = @(Get-ClaudeDesktopProcesses)
+$existing = @(Get-ApplicationProcesses)
 if ($existing.Count -gt 0) {
-    throw "Claude Desktop is already running (pid $($existing.ProcessId -join ',')). Quit it first."
+    throw "${appName} is already running (pid $($existing.ProcessId -join ',')). Quit it first."
 }
 
 $arguments = @('--run', '--seconds', "$Seconds")
+if ($Application -eq 'science') {
+    $target = @(& $exe --discover | Where-Object { $_ -match '[\\/]claude-science\.exe$' })
+    if (-not $target.Count) { throw 'Claude Science launcher was not discovered.' }
+    $arguments += @('--target', ('"' + $target[0] + '"'))
+}
 if ($Direct) { $arguments += '--direct' }
 if ($NoPreflight -and -not $Direct) { $arguments += '--no-preflight' }
 if ($ExtraArgs) { $arguments += @('--') + $ExtraArgs }
 Remove-Item -Force $log -ErrorAction SilentlyContinue
-Write-Host "Starting Claude Desktop ($(if ($Direct) { 'direct' } else { 'LEP' })) for $Seconds seconds"
-$supervisor = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+Write-Host "Starting ${appName} ($(if ($Direct) { 'direct' } else { 'LEP' })) for $Seconds seconds"
+$startedAt = Get-Date
+$supervisor = Start-Process -FilePath $exe -ArgumentList $arguments -WindowStyle Hidden -PassThru
 
 $observed = @()
 for ($i = 0; $i -lt 60; $i++) {
-    $observed = @(Get-ClaudeDesktopProcesses)
-    if ($observed.Count -gt 0) { break }
+    $observed = @(Get-ApplicationProcesses)
+    if ($observed.Count -gt 0 -and ($Application -eq 'desktop' -or
+        @($observed | Where-Object { $_.CommandLine -match '--type=renderer' }).Count -gt 0)) { break }
     if ($supervisor.HasExited) { break }
     Start-Sleep -Milliseconds 500
 }
 if ($observed.Count -eq 0) {
     $tail = if (Test-Path $log) { Get-Content $log -Tail 40 | Out-String } else { '' }
     if (-not $supervisor.HasExited) { Stop-Process -Id $supervisor.Id -Force -ErrorAction SilentlyContinue }
-    throw "Claude Desktop did not start.`n$tail"
+    throw "${appName} did not start.`n$tail"
 }
 
 Start-Sleep -Seconds 5
-$observed = @(Get-ClaudeDesktopProcesses)
+$observed = @(Get-ApplicationProcesses)
+if ($observed.Count -eq 0 -or ($Application -eq 'science' -and
+    @($observed | Where-Object { $_.CommandLine -match '--type=renderer' }).Count -eq 0)) {
+    if (-not $supervisor.HasExited) { Stop-Process -Id $supervisor.Id -Force }
+    throw "${appName} has no live renderer to verify. Increase -Seconds if startup needs more time."
+}
 $lepPids = @(Get-LepVerifiedPids)
-Write-Host 'Claude Desktop processes:'
+Write-Host "${appName} processes:"
 $missingCore = @()
 $outsideJob = @()
 $langMismatch = @()
@@ -149,7 +172,7 @@ if (-not $Direct -and $missingCore.Count -gt 0) {
     Write-Warning "Processes without a visible LEP Core module: $($missingCore -join ',')"
 }
 if (-not $Direct -and $outsideJob.Count -gt 0) {
-    Write-Warning "Claude Desktop processes outside the managed Job: $($outsideJob -join ',')"
+    Write-Warning "${appName} processes outside the managed Job: $($outsideJob -join ',')"
 }
 if ($ExpectLang -and $langMismatch.Count -gt 0) {
     Write-Warning "Processes whose language fields do not match ${ExpectLang}: $($langMismatch -join ',')"
@@ -159,19 +182,19 @@ if ($KillSupervisor) {
     Write-Host "Killing supervisor pid $($supervisor.Id) to test kill-on-close"
     Stop-Process -Id $supervisor.Id -Force
     Start-Sleep -Seconds 2
-    $remaining = @(Get-ClaudeDesktopProcesses)
+    $remaining = @(Get-ApplicationProcesses)
     if ($remaining.Count -gt 0) {
-        throw "Claude Desktop processes survived supervisor termination: $($remaining.ProcessId -join ',')"
+        throw "${appName} processes survived supervisor termination: $($remaining.ProcessId -join ',')"
     }
-    Write-Host 'No Claude Desktop processes remain after supervisor termination.'
+    Write-Host "No ${appName} processes remain after supervisor termination."
 } else {
     $supervisor.WaitForExit(($Seconds + 30) * 1000) | Out-Null
     Start-Sleep -Seconds 1
-    $remaining = @(Get-ClaudeDesktopProcesses)
+    $remaining = @(Get-ApplicationProcesses)
     if ($remaining.Count -gt 0) {
-        Write-Warning "Claude Desktop processes remain: $($remaining.ProcessId -join ',')"
+        Write-Warning "${appName} processes remain: $($remaining.ProcessId -join ',')"
     } else {
-        Write-Host 'No Claude Desktop processes remain.'
+        Write-Host "No ${appName} processes remain."
     }
 }
 
