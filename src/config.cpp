@@ -342,6 +342,11 @@ static bool parseConfigText(const std::wstring& baseDir, const std::wstring& tex
 
     auto values = parseIni(text);
 
+    config.application = lower(iniValue(values, L"Application", L"desktop"));
+    if (config.application != L"desktop" && config.application != L"science") {
+        error = L"目标应用必须为 desktop 或 science。";
+        return false;
+    }
     config.executable = iniValue(values, L"Executable");
     config.timezoneId = iniValue(values, L"Timezone", L"Pacific Standard Time");
     config.timezoneIana = mapWindowsTimeZoneToIana(config.timezoneId);
@@ -349,6 +354,19 @@ static bool parseConfigText(const std::wstring& baseDir, const std::wstring& tex
     config.standardName = iniValue(values, L"StandardName");
     config.daylightName = iniValue(values, L"DaylightName");
     config.extraArguments = iniValue(values, L"ExtraArguments");
+    config.desktopExecutable = iniValue(values, L"DesktopExecutable",
+        config.application == L"desktop" ? config.executable.c_str() : L"");
+    config.scienceExecutable = iniValue(values, L"ScienceExecutable",
+        config.application == L"science" ? config.executable.c_str() : L"");
+    config.desktopArguments = iniValue(values, L"DesktopArguments",
+        config.application == L"desktop" ? config.extraArguments.c_str() : L"");
+    if (isClaudeSciencePath(config.desktopExecutable) ||
+        isClaudeDesktopPath(config.scienceExecutable, L"")) {
+        error = L"DesktopExecutable 或 ScienceExecutable 与应用不匹配，请选择对应的启动器。";
+        return false;
+    }
+    config.executable = config.application == L"science" ? config.scienceExecutable : config.desktopExecutable;
+    if (config.application == L"desktop") config.extraArguments = config.desktopArguments;
     config.lepDir = joinPath(baseDir, L"lep");
 
     if (!parseUlong(iniValue(values, L"AnsiCodePage"), L"AnsiCodePage", 0, 65535, config.ansiCodePage, error))
@@ -428,6 +446,7 @@ bool writeDefaultConfig(const std::wstring& iniPath, const std::wstring& executa
     text += L"; Examples: UTC, China Standard Time, Tokyo Standard Time, Pacific Standard Time.\r\n";
     text += L"; IANA is automatic; LEP is fixed to the lep directory beside the executable.\r\n";
     text += L"[ClaudeProtect]\r\n";
+    text += L"Application=desktop\r\n";
     text += L"Executable=" + executable + L"\r\n";
     text += L"Timezone=Pacific Standard Time\r\n";
     text += L"Locale=en-US\r\n";
@@ -451,6 +470,19 @@ bool loadSettings(const std::wstring& baseDir, SettingsValues& values,
     if (fileExists(path) && !readTextFile(path, source, error)) return false;
     values = parseIni(source);
     return true;
+}
+
+bool loadApplicationConfig(const std::wstring& baseDir, const std::wstring& application,
+                           Config& config, std::wstring& error) {
+    if (application != L"desktop" && application != L"science") {
+        error = L"目标应用必须为 desktop 或 science。";
+        return false;
+    }
+    if (!loadConfig(baseDir, config, error)) return false;
+    config.application = application;
+    config.executable = application == L"science" ? config.scienceExecutable : config.desktopExecutable;
+    config.extraArguments = application == L"science" ? L"" : config.desktopArguments;
+    return prepareConfig(config, error);
 }
 
 bool saveSettings(const std::wstring& baseDir, const SettingsValues& values,
@@ -569,8 +601,17 @@ bool prepareConfig(Config& config, std::wstring& error) {
         return false;
     }
     if (config.executable.empty()) {
-        auto found = discoverClaudeExecutables();
+        auto found = discoverApplicationExecutables(config.application);
         if (!found.empty()) config.executable = found.front();
+    }
+    if ((config.application == L"desktop" && isClaudeSciencePath(config.executable)) ||
+        (config.application == L"science" && isClaudeDesktopPath(config.executable, L""))) {
+        error = L"启动器与目标应用不匹配，请清空启动器路径以自动发现所选应用。";
+        return false;
+    }
+    if (config.application == L"science" && !config.extraArguments.empty()) {
+        error = L"Science 桌面窗口使用默认启动交接，请清空附加启动参数。";
+        return false;
     }
     return true;
 }
@@ -604,6 +645,7 @@ std::wstring describeConfig(const Config& config) {
     text += L"log=" + config.logPath + L"\r\n";
     text += L"lep=" + config.lepDir + L"\r\n";
     text += L"probe=" + config.probePath + L"\r\n";
+    text += L"application=" + config.application + L"\r\n";
     text += L"executable=" + config.executable + L"\r\n";
     text += L"timezone=" + config.timezoneId + L" (" + config.timezoneIana + L")\r\n";
     text += L"childTZ=" + config.timezonePosix + L"\r\n";
@@ -774,8 +816,41 @@ bool isClaudeDesktopPath(const std::wstring& path, const std::wstring& target) {
     return false;
 }
 
+std::wstring applicationName(const std::wstring& application) {
+    return application == L"science" ? L"Claude Science" : L"Claude Desktop";
+}
+
+bool isClaudeSciencePath(const std::wstring& path) {
+    auto p = lower(path);
+    std::replace(p.begin(), p.end(), L'/', L'\\');
+    if (fileName(p) != L"claude-science.exe") return false;
+    return p.find(L"\\programs\\claudescience\\claude-science.exe") != p.npos ||
+           p.find(L"\\program files\\claudescience\\claude-science.exe") != p.npos ||
+           p.find(L"\\claudescience\\app-") != p.npos ||
+           p.find(L"\\.claude-science\\electron\\") != p.npos;
+}
+
+std::vector<std::wstring> discoverScienceExecutables() {
+    std::vector<std::wstring> candidates;
+    addCandidate(candidates, joinPath(env(L"LOCALAPPDATA"),
+                                    L"Programs\\ClaudeScience\\claude-science.exe"));
+    addCandidate(candidates, joinPath(env(L"ProgramFiles"), L"ClaudeScience\\claude-science.exe"));
+    // The versioned Electron binary requires a shell and launcher environment.
+    // Discover the stable CLI entry point only.
+    return candidates;
+}
+
+std::vector<std::wstring> discoverApplicationExecutables(const std::wstring& application) {
+    return application == L"science" ? discoverScienceExecutables() : discoverClaudeExecutables();
+}
+
 bool findUnmanagedClaudeDesktop(const std::wstring& target, DWORD& pid, std::wstring& path,
                                 std::wstring& warning) {
+    return findUnmanagedApplication(L"desktop", target, pid, path, warning);
+}
+
+bool findUnmanagedApplication(const std::wstring& application, const std::wstring& target,
+                              DWORD& pid, std::wstring& path, std::wstring& warning) {
     pid = 0;
     path.clear();
     warning.clear();
@@ -792,14 +867,19 @@ bool findUnmanagedClaudeDesktop(const std::wstring& target, DWORD& pid, std::wst
     }
     int inaccessible = 0;
     do {
-        if (_wcsicmp(entry.szExeFile, L"claude.exe") != 0) continue;
+        const auto expected = application == L"science" ? L"claude-science.exe" : L"claude.exe";
+        if (_wcsicmp(entry.szExeFile, expected) != 0 &&
+            _wcsicmp(entry.szExeFile, fileName(target).c_str()) != 0) continue;
         if (entry.th32ProcessID == GetCurrentProcessId()) continue;
         std::wstring image;
         if (!processImagePath(entry.th32ProcessID, image)) {
             ++inaccessible;
             continue;
         }
-        if (isClaudeDesktopPath(image, target)) {
+        bool matches = application == L"science"
+            ? isClaudeSciencePath(image) || _wcsicmp(image.c_str(), target.c_str()) == 0
+            : isClaudeDesktopPath(image, target);
+        if (matches) {
             pid = entry.th32ProcessID;
             path = image;
             return true;
@@ -807,7 +887,6 @@ bool findUnmanagedClaudeDesktop(const std::wstring& target, DWORD& pid, std::wst
     } while (Process32NextW(snapshot, &entry));
     if (inaccessible)
         warning = std::to_wstring(inaccessible) +
-                  L" claude.exe process(es) could not be inspected; they were not treated as "
-                  L"Claude Desktop.";
+                  L" candidate process(es) could not be inspected for " + applicationName(application) + L".";
     return false;
 }

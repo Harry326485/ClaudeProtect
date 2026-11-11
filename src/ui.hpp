@@ -11,11 +11,17 @@ struct UiStatus {
     DWORD processCount = 0;
     std::wstring timezone, locale, verify, busyLabel;
     std::wstring detail;
+    struct Application {
+        std::wstring id, name, timezone, locale, verify;
+        bool active = false, busy = false;
+        DWORD processCount = 0;
+    };
+    std::vector<Application> applications;
 };
 
 struct UiActions {
     std::function<UiStatus()> status;
-    std::function<void(UiCommand)> command;
+    std::function<void(UiCommand, const std::wstring&)> command;
 };
 
 bool openControlWindow(const std::wstring& baseDir, UiPage page,

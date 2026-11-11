@@ -9,6 +9,7 @@ struct LaunchSpec {
     std::wstring executable;
     std::wstring arguments;
     bool claudeDesktop = false;
+    bool claudeScience = false;
     bool useLep = true;
 };
 
@@ -62,5 +63,6 @@ private:
     std::vector<DWORD> lepInjectedPids_;
     std::vector<std::wstring> seenLogFailures_;
     std::wstring targetDirectory_;
+    bool science_ = false;
     std::wstring lastProbeLog_;
 };
