@@ -1,5 +1,7 @@
 # ClaudeProtect
 
+> macOS：适配采用环境变量方案，直接启动官方安装的 Claude，保留签名和独立资料目录，见 [macOS 使用与验证说明](macos/README.md)。原生语言区域未完全覆盖，进程监管采用用户态实现。
+
 Windows x64 托盘程序，用于在指定时区和语言环境下启动 Claude Desktop，并监管它的进程树。
 
 ClaudeProtect 使用 LocaleEmulatorPlus-Core（LEP）提供进程内时区、区域和语言虚拟化，通过 Windows Job Object 管理 Claude 及其子进程。默认配置为洛杉矶时区和美式英语，支持夏令时。

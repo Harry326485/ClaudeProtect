@@ -86,3 +86,5 @@ dialog .button-row { justify-content: flex-end; }
 
 #overview .small-icon { float: left; margin: 0 8px 0 0; width: 20px; height: 20px; font-size: 14px; }
 #overview .info-card p { clear: both; padding-top: 4px; margin-top: 0; }
+html[data-platform=macos] { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+.status-pill.warning { color: #88642d; background: #fff8ed; border-color: #f1dfbf; }

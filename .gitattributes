@@ -4,3 +4,4 @@
 # Preserve upstream source and license bytes, including original whitespace.
 third_party/picojson/picojson.h -text -whitespace
 LICENSES/WebView2-*.txt -text -whitespace
+macos/runtime-licenses/* -text -whitespace
