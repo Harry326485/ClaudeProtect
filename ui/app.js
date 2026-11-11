@@ -389,7 +389,7 @@ async function initialize() {
     $('loading').hidden = true;
     if (isMac) {
       document.documentElement.dataset.platform = 'macos';
-      document.querySelector('.quiet-note').textContent = '关闭窗口后继续运行。点击 Dock 图标或菜单栏 CP 可重新打开控制面板。';
+      document.querySelector('.quiet-note').textContent = '关闭窗口后继续运行。点击 Dock 或菜单栏中的 ClaudeProtect 图标可重新打开控制面板。';
       document.querySelector('.info-grid .info-card:first-child h3').textContent = '启动环境与语言参数';
       document.querySelector('.info-grid .info-card:first-child p').textContent = '直接启动官方 Claude，设置时区、UTF-8 区域和主程序语言参数。原生子进程语言区域未完全覆盖。';
       document.querySelector('.info-grid .info-card:last-child p').textContent = '停止会话或退出 ClaudeProtect 时，会清理本次启动并跟踪到的 Claude 及其子进程。';

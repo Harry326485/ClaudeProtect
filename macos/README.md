@@ -8,6 +8,8 @@
 
 发行 App 的设置、日志和独立资料位于 `~/Library/Application Support/ClaudeProtect/`；下文的 `build/macos/` 资料路径适用于源码开发版。DMG 不包含开发机的设置、模型密钥、聊天或登录资料。旧开发版的资料仍保留在原目录，不会自动打包或覆盖已有发行版资料。
 
+发行 App 的页面顶部、Dock 和菜单栏图标均随 Claude 会话状态切换：运行时为橙色带蓝盾，停止后恢复灰色。Finder 中的 App 文件图标保持灰色。
+
 双击 `build/macos/ClaudeProtect.app`，保存设置后选择“启动 Claude”。请先退出其他 Claude。顶部图标在会话运行时变亮，停止后恢复灰色；“停止会话”或退出控制程序会清理已跟踪的会话进程。关闭窗口后可从 Dock 或菜单栏重新打开。
 
 启动器设置 `TZ`、`LANG`、`LC_ALL`，并给 Claude 主程序传入 `--lang`、`-AppleLanguages`、`-AppleLocale`。不注入动态库、不修改 ASAR、不重新签名 Claude，也不改变系统时区和全局语言。

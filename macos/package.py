@@ -53,22 +53,23 @@ def main():
         "Python source: https://www.python.org/downloads/source/\n"
         "Build recipes and dependency sources: https://github.com/astral-sh/python-build-standalone/tree/20261110\n")
     # Reuse the repository icon. The largest ICO entry is an embedded PNG.
-    ico = (ROOT / "assets/claude-stopped.ico").read_bytes()
-    count = struct.unpack_from("<H", ico, 4)[0]
-    entries = [struct.unpack_from("<BBBBHHII", ico, 6 + 16 * i) for i in range(count)]
-    largest = max(entries, key=lambda e: (e[0] or 256) * (e[1] or 256))
-    png = ico[largest[7]:largest[7] + largest[6]]
-    if not png.startswith(b"\x89PNG"):
-        raise SystemExit("Expected PNG image in largest ICO entry")
-    iconset = BUILD / "ClaudeProtect.iconset"
-    iconset.mkdir(exist_ok=True)
-    base = BUILD / "icon-base.png"
-    base.write_bytes(png)
-    for size in (16, 32, 128, 256, 512):
-        for scale in (1, 2):
-            name = f"icon_{size}x{size}" + ("@2x" if scale == 2 else "") + ".png"
-            run("sips", "-z", size * scale, size * scale, base, "--out", iconset / name)
-    run("iconutil", "-c", "icns", iconset, "-o", resources / "ClaudeProtect.icns")
+    for state, icon_name in (("stopped", "ClaudeProtect"), ("running", "ClaudeProtect-running")):
+        ico = (ROOT / f"assets/claude-{state}.ico").read_bytes()
+        count = struct.unpack_from("<H", ico, 4)[0]
+        entries = [struct.unpack_from("<BBBBHHII", ico, 6 + 16 * i) for i in range(count)]
+        largest = max(entries, key=lambda e: (e[0] or 256) * (e[1] or 256))
+        png = ico[largest[7]:largest[7] + largest[6]]
+        if not png.startswith(b"\x89PNG"):
+            raise SystemExit("Expected PNG image in largest ICO entry")
+        iconset = BUILD / (icon_name + ".iconset")
+        iconset.mkdir(exist_ok=True)
+        base = BUILD / (icon_name + "-base.png")
+        base.write_bytes(png)
+        for size in (16, 32, 128, 256, 512):
+            for scale in (1, 2):
+                name = f"icon_{size}x{size}" + ("@2x" if scale == 2 else "") + ".png"
+                run("sips", "-z", size * scale, size * scale, base, "--out", iconset / name)
+        run("iconutil", "-c", "icns", iconset, "-o", resources / (icon_name + ".icns"))
     info_path = app / "Contents/Info.plist"
     info = plistlib.loads(info_path.read_bytes())
     info.pop("CPPython", None)

@@ -24,6 +24,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScr
     private var lastStatus = ""
     private var values: [String: Any] = [:]
     private var sessionValues: [String: Any] = [:]
+    private var displayedIconRunning: Bool?
     private let configurationQueue = DispatchQueue(label: "local.claudeprotect.settings", qos: .userInitiated)
     private var resources: URL { Bundle.main.resourceURL! }
     private var packaged: Bool { FileManager.default.fileExists(atPath: resources.appendingPathComponent("backend/supervisor.py").path) }
@@ -306,11 +307,30 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScr
         stopItem.isEnabled = process != nil && !stopping
         statusItem.title = status["busyLabel"] as? String ?? "会话未运行"
         if statusItem.title.isEmpty { statusItem.title = "会话未运行" }
-        item.button?.title = process == nil ? "CP" : (status["state"] as? String == "running" ? "CP ●" : "CP …")
+        updateIcons(running: process != nil && !testing && status["state"] as? String == "running")
         if ready, let data = try? JSONSerialization.data(withJSONObject: status, options: [.sortedKeys]), let key = String(data: data, encoding: .utf8), key != lastStatus {
             lastStatus = key
             deliver(["type": "status", "data": status])
         }
+    }
+
+    private func updateIcons(running: Bool) {
+        guard displayedIconRunning != running else { return }
+        displayedIconRunning = running
+        let name = running ? "ClaudeProtect-running" : "ClaudeProtect"
+        if let image = NSImage(contentsOf: resources.appendingPathComponent(name + ".icns")) {
+            NSApp.applicationIconImage = image
+            if let menuImage = image.copy() as? NSImage {
+                menuImage.size = NSSize(width: 18, height: 18)
+                menuImage.isTemplate = false
+                item.button?.image = menuImage
+                item.button?.imagePosition = .imageOnly
+                item.button?.title = ""
+            }
+        } else {
+            item.button?.title = running ? "CP ●" : "CP"
+        }
+        item.button?.toolTip = running ? "ClaudeProtect · 会话运行中" : "ClaudeProtect · 待机"
     }
 }
 
