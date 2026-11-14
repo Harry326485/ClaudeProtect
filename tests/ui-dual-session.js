@@ -5,7 +5,6 @@ const path = require('node:path');
 
 // Minimal DOM for testing state and message routing without a WebView session.
 const elements = new Map();
-const isMac = process.argv.includes('--macos');
 class Element {
   constructor(tagName = 'div') {
     this.tagName = tagName.toUpperCase();
@@ -40,8 +39,6 @@ for (const match of fs.readFileSync(path.join(root, 'ui/index.html'), 'utf8').ma
   const element = new Element();
   element.id = match[1];
 }
-elements.get('summary-verification').previousElementSibling = new Element('dt');
-const logos = {'.logo-stopped': new Element(), '.logo-running': new Element()};
 const messages = [];
 let receive;
 const context = vm.createContext({
@@ -49,14 +46,12 @@ const context = vm.createContext({
     getElementById: id => elements.get(id),
     createElement: tagName => new Element(tagName),
     createTextNode: text => Object.assign(new Element(), { textContent: text }),
-    querySelector: selector => logos[selector],
     querySelectorAll: () => [],
     addEventListener() {},
     body: { dataset: {} }
   },
   Option: function(text, value) { return Object.assign(new Element('option'), { textContent: text, value }); },
   window: {
-    CP_PLATFORM: isMac ? 'macos' : undefined,
     chrome: { webview: {
       postMessage: message => messages.push(message),
       addEventListener: (event, callback) => { receive = callback; }
@@ -68,43 +63,6 @@ const context = vm.createContext({
 });
 const source = fs.readFileSync(path.join(root, 'ui/app.js'), 'utf8').replace(/initialize\(\);\s*$/, '');
 vm.runInContext(source, context);
-async function checkAction(button, action, application) {
-  const pending = button.onclick();
-  const message = messages.at(-1);
-  assert.equal(message.action, action);
-  assert.equal(message.application, application);
-  await receive({ data: { type: 'response', id: message.id, ok: true, data: {} } });
-  await pending;
-}
-
-if (isMac) {
-  vm.runInContext(`
-    buildForm([]);
-    applyValues({executable:'/Applications/Claude.app', extraarguments:'--disable-gpu'});
-    buildSessions(sessionApplications({active:false, timezone:'UTC',locale:'en-US'}));
-    updateStatus({active:true, busy:false, state:'running', processCount:7, timezone:'UTC',locale:'en-US'});
-  `, context);
-  assert.equal(elements.get('field-executable').value, '/Applications/Claude.app');
-  assert.equal(elements.get('field-extraarguments').value, '--disable-gpu');
-  assert.equal(elements.has('field-scienceexecutable'), false);
-  assert.equal(elements.has('session-science'), false);
-  const keys = Object.keys(vm.runInContext('values()', context));
-  assert(!keys.includes('desktopexecutable'));
-  assert(!keys.includes('desktoparguments'));
-  assert.equal(logos['.logo-running'].hidden, false);
-  const desktop = elements.get('session-desktop');
-  assert.equal(desktop.querySelector('[data-action=start]').disabled, true);
-  assert.equal(desktop.querySelector('[data-action=stop]').disabled, false);
-  (async () => {
-    await checkAction(desktop.querySelector('[data-action=stop]'), 'stop', 'desktop');
-    vm.runInContext("updateStatus({active:false, busy:false, state:'stopped',timezone:'UTC',locale:'en-US'});", context);
-    assert.equal(desktop.querySelector('[data-action=start]').disabled, false);
-    assert.equal(desktop.querySelector('[data-action=stop]').disabled, true);
-    assert.equal(logos['.logo-running'].hidden, true);
-    await checkAction(desktop.querySelector('[data-action=start]'), 'start', 'desktop');
-    console.log('macOS single-session settings, controls, state and icon routing passed.');
-  })().catch(error => { console.error(error); process.exitCode = 1; });
-} else {
 vm.runInContext(`
   buildForm([]);
   applyValues({ application: 'science', executable: 'science-legacy.exe' });
@@ -122,7 +80,14 @@ assert.equal(desktop.querySelector('[data-action=start]').disabled, true);
 assert.equal(desktop.querySelector('[data-action=stop]').disabled, false);
 assert.equal(science.querySelector('[data-action=start]').disabled, false);
 
-
+async function checkAction(button, action, application) {
+  const pending = button.onclick();
+  const message = messages.at(-1);
+  assert.equal(message.action, action);
+  assert.equal(message.application, application);
+  await receive({ data: { type: 'response', id: message.id, ok: true, data: {} } });
+  await pending;
+}
 
 (async () => {
   await checkAction(science.querySelector('[data-action=start]'), 'start', 'science');
@@ -130,5 +95,3 @@ assert.equal(science.querySelector('[data-action=start]').disabled, false);
   await checkAction(desktop.querySelector('[data-action=stop]'), 'stop', 'desktop');
   console.log('Dual application controls, legacy settings and independent message routing passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
-
-}

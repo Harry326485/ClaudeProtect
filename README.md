@@ -1,7 +1,5 @@
 # ClaudeProtect
 
-> macOS：Apple Silicon 适配与独立 DMG 打包说明见 [macOS 使用说明](macos/README.md)。
-
 Windows x64 托盘应用，在指定时区和语言环境下启动并监管 Claude Desktop 与 Claude Science。
 
 ## 核心功能

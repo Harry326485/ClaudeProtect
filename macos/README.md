@@ -1,6 +1,6 @@
 # ClaudeProtect macOS
 
-当前版本 **0.3.0** 使用环境变量方案，直接启动正式安装的 Claude，保留官方签名。控制面板复用 Windows 版 HTML/CSS/JavaScript，由 WKWebView 承载。
+当前版本 **0.3.0** 使用环境变量方案，直接启动正式安装的 Claude，保留官方签名。控制面板沿用 Windows 版界面设计，由 WKWebView 承载。HTML、CSS 和 JavaScript 独立维护在 `macos/ui/`，不修改 Windows 的 `ui/`、打包脚本或根 README。
 
 ## 使用
 
@@ -31,6 +31,8 @@
 设置位于 `build/macos/ClaudeProtect.json`，备份为 `.json.bak`，更改下次启动生效。可设置 IANA 时区、语言区域、启动预检、进程轮询、CC Switch 同步、安装路径和附加参数。附加参数按引号解析，不经 shell 执行，不能覆盖统一管理的语言或资料目录参数。
 
 ```sh
+node macos/tests/ui-session.js
+python3 -B -m unittest discover -s macos -p test_environment_mode.py
 bash macos/build.sh
 open build/macos/ClaudeProtect.app
 # 终端运行，Ctrl+C 停止

@@ -44,33 +44,6 @@ const fields = [
   { key: 'desktoparguments', ini: 'DesktopArguments', page: 'launch', label: 'Desktop 附加启动参数', placeholder: '例如 --lang=ja-JP', help: '传给 Desktop，含空格的路径参数需要加引号。Science 桌面启动使用默认参数。' }
 ];
 
-const isMac = window.CP_PLATFORM === 'macos';
-if (isMac) {
-  const launch = fields.findIndex(field => field.page === 'launch');
-  fields.splice(launch, fields.filter(field => field.page === 'launch').length,
-    {key: 'executable', ini: 'Executable', page: 'launch', label: 'Claude Desktop 可执行文件', browse: 'file'},
-    {key: 'extraarguments', ini: 'ExtraArguments', page: 'launch', label: '附加启动参数'}
-  );
-  const timezoneField = fields.find(field => field.key === 'timezone');
-  timezoneField.fallback = 'America/Los_Angeles';
-  timezoneField.help = '使用 IANA 时区，自动处理夏令时，例如 America/Los_Angeles、Asia/Shanghai。';
-  fields.find(field => field.key === 'locale').help = 'BCP-47 区域代码，用于语言与区域设置，并自动传入 Claude 的 --lang 参数。从下拉列表选择常用语言与区域。';
-  for (const key of ['verifyinjection', 'verifygraceseconds']) {
-    fields.splice(fields.findIndex(field => field.key === key), 1);
-  }
-  const advanced = fields.findIndex(field => field.page === 'advanced');
-  const count = fields.filter(field => field.page === 'advanced').length;
-  fields.splice(advanced, count,
-    {key: 'pollintervalms', ini: 'PollIntervalMs', page: 'advanced', label: '进程监管轮询间隔', type: 'number', fallback: '200', min: 100, max: 5000, help: '扫描会话进程的间隔，单位毫秒。允许 100–5000，默认 200。'},
-    {key: 'syncccswitch', ini: 'SyncCCSwitch', page: 'advanced', label: '同步 CC Switch Desktop 配置', fallback: 'on', options: [['on', '开启 · 启动时同步已选择的本地模型映射'], ['off', '关闭 · 沿用隔离资料目录中的配置']], help: '只同步 Desktop 配置，不修改 CLI 配置或复制登录资料。关闭后不再自动更新已有模型配置。'}
-  );
-  const executable = fields.find(field => field.key === 'executable');
-  executable.placeholder = '留空，自动发现 /Applications 或个人 Applications 中的 Claude.app';
-  executable.help = '直接启动正式安装的 Claude.app，保留官方签名，使用 ClaudeProtect 独立资料目录。';
-  fields.find(field => field.key === 'extraarguments').help = '按 shell 引号规则解析为参数列表，不通过 shell 执行。--lang、AppleLocale 和资料目录由程序统一管理。';
-  fields.find(field => field.key === 'extraarguments').placeholder = '例如 --disable-gpu';
-}
-
 const $ = id => document.getElementById(id);
 const pending = new Map();
 let nextId = 0;
@@ -159,7 +132,7 @@ function updateDirty() {
 }
 
 function buildForm(timezones) {
-  const notes = isMac ? {} : {
+  const notes = {
     advanced: '通常保留默认值即可。代码页与字体字符集为 0 时，会随语言与区域自动推导。'
   };
   for (const [page, text] of Object.entries(notes)) {
@@ -261,9 +234,6 @@ function applyValues(loaded) {
 
 function updateStatus(next) {
   status = next;
-  const running = Boolean(next.active) && (!isMac || ['verifying', 'verified', 'running', 'warning'].includes(next.state));
-  document.querySelector('.logo-stopped').hidden = running;
-  document.querySelector('.logo-running').hidden = !running;
   const busy = Boolean(next.busy);
   $('status-pill').textContent = busy ? '处理中' : next.active ? '受监管运行中' : '待机';
   $('status-pill').className = `status-pill${busy ? ' busy' : next.active ? ' active' : ''}`;
@@ -274,18 +244,8 @@ function updateStatus(next) {
   $('summary-verification').textContent = ({ strict: '严格验证', warn: '仅记录警告', off: '已关闭' })[next.verify] || '未设置';
   $('status-detail').textContent = next.detail || '';
   $('status-detail').hidden = !next.detail;
-  $('selftest').disabled = busy || (isMac && next.active);
-  if (isMac) {
-    $('summary-verification').previousElementSibling.textContent = '运行方式';
-    $('summary-verification').textContent = '环境变量';
-    const state = next.state || 'stopped';
-    const labels = {preparing: '准备中', verifying: '验证中', verified: '验证通过', running: '运行中', warning: '有警告', failed: '已停止', stopped: '待机'};
-    $('status-pill').textContent = busy ? '自检中' : labels[state] || '待机';
-    $('session-title').textContent = busy ? '正在进行环境自检' : next.active ? 'Claude 正在受监管运行' : state === 'failed' ? '会话已停止' : '准备启动';
-    $('session-description').textContent = next.active ? `当前跟踪 ${next.processCount || 0} 个进程。` : '通过下方按钮启动受监管的 Claude Desktop。';
-    if (state === 'warning') $('status-pill').className = 'status-pill warning';
-  }
-  for (const app of sessionApplications(next)) {
+  $('selftest').disabled = busy;
+  for (const app of next.applications || []) {
     const row = $(`session-${app.id}`);
     if (!row) continue;
     row.querySelector('.app-state').textContent = app.busy ? '正在预检并启动…' : app.active ? `受监管运行 · ${app.processCount} 个进程` : '未启动';
@@ -360,11 +320,10 @@ window.chrome.webview.addEventListener('message', async event => {
   else if (message.type === 'closeRequested') {
     if (closing) return;
     closing = true;
-    const choice = await dialog('有未保存的设置', isMac ? '关闭窗口后，ClaudeProtect 会继续运行，可从 Dock 或菜单栏重新打开。' : '关闭窗口后，ClaudeProtect 会继续在托盘运行。',
+    const choice = await dialog('有未保存的设置', '关闭窗口后，ClaudeProtect 会继续在托盘运行。',
       [['继续编辑', 'cancel'], ['放弃更改并关闭', 'discard'], ['保存并关闭', 'save', true]]);
     closing = false;
     if (choice === 'discard' || (choice === 'save' && await save())) await request('close');
-    else if (isMac) window.chrome.webview.postMessage({action: 'closeCancelled'});
   }
 });
 
@@ -390,14 +349,8 @@ $('reload').onclick = async () => {
 $('selftest').onclick = () => run('selftest');
 
 document.addEventListener('keydown', event => {
-  if ((event.ctrlKey || (isMac && event.metaKey)) && event.key.toLowerCase() === 's') { event.preventDefault(); if (dirty) save(); }
+  if (event.ctrlKey && event.key.toLowerCase() === 's') { event.preventDefault(); if (dirty) save(); }
 });
-
-function sessionApplications(next) {
-  return isMac ? [{id: 'desktop', name: 'Claude Desktop', active: Boolean(next.active),
-    busy: Boolean(next.active && next.state === 'preparing'), processCount: next.processCount || 0,
-    timezone: next.timezone, locale: next.locale}] : next.applications || [];
-}
 
 function buildSessions(applications) {
   for (const app of applications) {
@@ -432,19 +385,11 @@ async function initialize() {
     const result = await request('load');
     buildForm(result.timezones);
     applyValues(result.values);
-    buildSessions(sessionApplications(result.status));
+    buildSessions(result.status.applications);
     updateStatus(result.status);
     showPage(result.page || 'general');
     showView(result.view || 'overview');
     $('loading').hidden = true;
-    if (isMac) {
-      document.documentElement.dataset.platform = 'macos';
-      document.querySelector('.eyebrow').textContent = 'Claude Desktop';
-      document.querySelector('.quiet-note').textContent = '关闭窗口后继续运行。点击 Dock 或菜单栏中的 ClaudeProtect 图标可重新打开控制面板。';
-      document.querySelector('.info-grid .info-card:first-child h3').textContent = '进程内时区与语言';
-      document.querySelector('.info-grid .info-card:first-child p').textContent = '设置用于 Claude 及其受监管子进程。具体功能可在项目 README 中查看。';
-      document.querySelector('.info-grid .info-card:last-child p').textContent = '停止会话或退出 ClaudeProtect 时，会清理本次启动并跟踪到的 Claude 及其子进程。';
-    }
   } catch (error) { $('loading').textContent = `加载失败，${error.message}`; }
 }
 initialize();
