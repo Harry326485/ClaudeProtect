@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>ClaudeProtect</title>
+  <style>/* APP_STYLE */</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true"><span class="logo-stopped"><!-- APP_LOGO_STOPPED --></span><span class="logo-running" hidden><!-- APP_LOGO_RUNNING --></span></span><span>ClaudeProtect</span></div>
+    <nav aria-label="主导航">
+      <button class="nav-button" data-view="overview" aria-current="page">概览</button>
+      <button class="nav-button" data-view="settings">设置</button>
+    </nav>
+  </header>
+  <main id="main">
+    <div id="loading" class="loading" role="status">正在加载控制面板…</div>
+    <section id="overview" class="view" hidden aria-labelledby="overview-title">
+      <div class="page-heading"><div><p class="eyebrow">Claude Desktop · Claude Science</p><h1 id="overview-title">你的 Claude 运行环境</h1><p class="subtitle">设置时区与语言，由 ClaudeProtect 启动并监管进程。</p></div><span id="status-pill" class="status-pill">待机</span></div>
+      <div class="session-card">
+        <div class="session-heading"><span class="shield-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span><div><h2 id="session-title">准备启动</h2><p id="session-description">分别启动两个应用，独立监管各自的进程树。</p></div></div>
+        <dl class="summary-grid"><div><dt>时区</dt><dd id="summary-timezone">—</dd></div><div><dt>语言与区域</dt><dd id="summary-locale">—</dd></div><div><dt>注入验证</dt><dd id="summary-verification">—</dd></div></dl>
+        <div id="status-detail" class="inline-notice" hidden></div>
+        <div id="application-sessions"></div>
+        <div class="session-actions"><button id="selftest" class="button text-button">运行环境自检</button></div>
+      </div>
+      <div class="section-heading"><h2>环境设置</h2><button class="text-link" data-view="settings">管理设置 <span aria-hidden="true">→</span></button></div>
+      <div class="info-grid"><article class="info-card"><span class="small-icon" aria-hidden="true">◎</span><h3>进程内时区与语言</h3><p>设置用于 Claude 及其受监管子进程。虚拟化覆盖范围可在项目 README 中查看。</p></article><article class="info-card"><span class="small-icon" aria-hidden="true">⊞</span><h3>统一管理进程树</h3><p>停止会话或退出 ClaudeProtect 时，会结束 Job 内的 Claude 及其子进程。</p></article></div>
+      <p class="quiet-note">关闭窗口后继续在托盘运行。再次点击托盘图标即可打开控制面板。</p>
+    </section>
+    <section id="settings" class="view" hidden aria-labelledby="settings-title">
+      <div class="settings-heading"><button class="back-button" data-view="overview" aria-label="返回概览">←</button><h1 id="settings-title">设置</h1></div>
+      <div id="settings-tabs" class="segmented" role="tablist" aria-label="设置分类">
+        <button id="tab-general" role="tab" aria-controls="page-general" aria-selected="true" data-page="general">通用</button>
+        <button id="tab-protection" role="tab" aria-controls="page-protection" aria-selected="false" tabindex="-1" data-page="protection">保护策略</button>
+        <button id="tab-advanced" role="tab" aria-controls="page-advanced" aria-selected="false" tabindex="-1" data-page="advanced">高级</button>
+        <button id="tab-launch" role="tab" aria-controls="page-launch" aria-selected="false" tabindex="-1" data-page="launch">启动与路径</button>
+      </div>
+      <form id="settings-form" novalidate>
+        <div id="page-general" class="settings-page" role="tabpanel" aria-labelledby="tab-general"></div>
+        <div id="page-protection" class="settings-page" role="tabpanel" aria-labelledby="tab-protection" hidden></div>
+        <div id="page-advanced" class="settings-page" role="tabpanel" aria-labelledby="tab-advanced" hidden></div>
+        <div id="page-launch" class="settings-page" role="tabpanel" aria-labelledby="tab-launch" hidden></div>
+      </form>
+    </section>
+  </main>
+  <footer id="settings-footer" hidden><div><span id="save-state" role="status">更改将在下次启动会话时生效</span><div class="button-row"><button id="reload" class="button">重新加载</button><button id="save" class="button primary" disabled>保存设置</button></div></div></footer>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="message-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-message"><h2 id="dialog-title">提示</h2><p id="dialog-message"></p><div id="dialog-actions" class="button-row"></div></dialog>
+  <script>/* APP_SCRIPT */</script>
+</body>
+</html>
