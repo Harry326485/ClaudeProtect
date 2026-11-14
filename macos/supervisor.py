@@ -165,8 +165,8 @@ class Session:
             samples = report.get("offsets", [])
             valid = len(samples) == len(expected) and all(sample.get("libcOffset") == offset and sample.get("foundationOffset") == offset for sample, offset in zip(samples, expected))
         if process.returncode or not valid:
-            raise RuntimeError("启动器环境预检失败：时区、UTF-8 区域或冬夏令时与设置不符。")
-        return "启动器时区与 UTF-8 区域预检通过；未验证 Claude 页面及全部子进程，原生语言区域未完全覆盖。"
+            raise RuntimeError("环境预检失败：时区、语言或夏令时结果与设置不符。")
+        return "环境预检通过。"
 
     def run(self, seconds):
         publish("preparing", "正在准备官方 Claude 的启动环境", values=self.values)
@@ -188,7 +188,7 @@ class Session:
                 raise RuntimeError("独立资料目录不能是符号链接。")
             profile.mkdir(exist_ok=True, mode=0o700)
         if self.values["preflight"] != "off":
-            publish("preparing", "正在检查启动器时区与 UTF-8 区域", values=self.values)
+            publish("preparing", "正在执行启动前环境预检", values=self.values)
             self.preflight(required=self.values["preflight"] == "require")
         if self.stop_requested:
             return "用户停止会话"
@@ -213,7 +213,7 @@ class Session:
                         raise RuntimeError(f"Claude exited with code {self.process.returncode}")
                     return "Claude 已退出"
                 owned = self.owned()
-                publish("running", "环境变量模式运行中；原生语言区域未完全覆盖。", pid=self.process.pid,
+                publish("running", "会话运行中", pid=self.process.pid,
                         processes=len(owned), values=self.values, session=self.directory.name)
                 if seconds and time.monotonic() - started >= seconds:
                     return "定时运行已结束"

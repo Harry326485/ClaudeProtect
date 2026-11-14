@@ -10,9 +10,24 @@
 pwsh -NoProfile -File scripts/build.ps1
 pwsh -NoProfile -File scripts/test-settings.ps1
 pwsh -NoProfile -File scripts/test-supervisor.ps1 -SkipBuild
+pwsh -NoProfile -File scripts/test-multi-session.ps1
+node tests/ui-dual-session.js
 ```
 
+双会话测试需要已构建的 LEP 和 WebView2 SDK，运行前需退出 Desktop 和 Science。前端控制测试需要 Node.js 18 或更新版本。
+
 LEP 修改使用独立补丁维护，工作流程见 [patches/lep](patches/lep/README.md)。涉及钩子、ABI 或注入流程的改动还需要运行上游原生测试和相关观测脚本，并记录验证版本及结果。
+
+## 清理生成文件
+
+关闭本仓库运行的 ClaudeProtect 与探针后，先预览再执行清理。
+
+```powershell
+pwsh -NoProfile -File scripts/clean.ps1 -WhatIf
+pwsh -NoProfile -File scripts/clean.ps1
+```
+
+清理脚本保留运行二进制、配置及其备份、SDK overlay。
 
 ## 修改约定
 

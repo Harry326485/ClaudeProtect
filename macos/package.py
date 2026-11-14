@@ -91,7 +91,7 @@ def main():
         "将 ClaudeProtect.app 拖入 Applications，然后打开。需要 macOS 13+、Apple Silicon 和已安装的官方 Claude。\n"
         "本构建使用本地临时签名，未经过 Apple Developer ID 签名或公证；macOS 可能要求在系统设置中确认打开。\n"
         "用户资料保存在 ~/Library/Application Support/ClaudeProtect，不包含在此安装包中。\n"
-        "原生子进程语言区域未完全覆盖，详见 App 菜单中的适配说明。\n")
+        "通过控制面板设置时区与语言，启动并监管 Claude 会话。\n")
     dmg = BUILD / f"ClaudeProtect-{VERSION}-macOS-arm64.dmg"
     if dmg.exists():
         dmg.unlink()

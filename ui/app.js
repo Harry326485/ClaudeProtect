@@ -30,7 +30,7 @@ const fields = [
     ['th-TH', '泰语（泰国） · th-TH'],
     ['vi-VN', '越南语（越南） · vi-VN'],
     ['id-ID', '印度尼西亚语 · id-ID']
-  ], help: 'BCP-47 区域代码，用于区域、默认代码页和首选语言，并自动传入 Claude 的 --lang 参数。从下拉列表选择常用语言与区域。' },
+  ], help: 'BCP-47 区域代码，用于区域、默认代码页和首选语言，Desktop 自动传入 --lang 参数，Science 通过进程内语言环境传递。从下拉列表选择常用语言与区域。' },
   { key: 'verifyinjection', ini: 'VerifyInjection', page: 'protection', label: '运行中注入验证', fallback: 'strict', options: [['strict', '严格 · 检测失败时停止会话（推荐）'], ['warn', '警告 · 仅记录日志'], ['off', '关闭运行中验证']] },
   { key: 'verifygraceseconds', ini: 'VerifyGraceSeconds', page: 'protection', label: '注入等待时间', type: 'number', fallback: '8', min: 1, max: 120, help: '新进程创建后，等待指定秒数再检查注入证据，为初始化留出时间。允许 1–120 秒，默认 8 秒。' },
   { key: 'preflight', ini: 'Preflight', page: 'protection', label: '启动前环境预检', fallback: 'auto', options: [['auto', '自动 · 有探针时执行（默认）'], ['require', '必须 · 探针缺失或检查失败时拒绝启动'], ['off', '关闭启动预检']] },
@@ -39,20 +39,25 @@ const fields = [
   { key: 'fontcharset', ini: 'FontCharset', page: 'advanced', label: '字体字符集', type: 'number', fallback: '0', min: 0, max: 255, help: '0 按代码页自动推导。使用 Windows 字符集编号，例如简体中文 134。允许 0–255。' },
   { key: 'registryredirectionmode', ini: 'RegistryRedirectionMode', page: 'advanced', label: '注册表查询重定向', fallback: '2', options: [['0', '0 · 基础代码页与语言查询'], ['1', '1 · NLS 语言与代码页查询'], ['2', '2 · 扩展区域与首选语言（推荐）']], help: '在受监管进程内覆盖相关注册表查询。模式 0 覆盖基础 ACP、OEMCP 和默认语言，模式 1 调整 NLS 查询项，模式 2 扩展到用户区域和首选语言。' },
   { key: 'hookuilanguagemode', ini: 'HookUILanguageMode', page: 'advanced', label: '界面语言兼容模式', fallback: '2', options: [['0', '0 · 关闭界面语言专用钩子'], ['1', '1 · Win32 界面语言'], ['2', '2 · MUI、首选语言与 WinRT（推荐）']], help: '模式 1 覆盖 Win32 默认 UI 语言。模式 2 进一步覆盖 native UI、虚拟 MUI、线程首选语言和 WinRT 语言列表。Claude 自身保存的界面语言仍可能优先。' },
-  { key: 'executable', ini: 'Executable', page: 'launch', label: 'Claude Desktop 可执行文件', browse: 'file', placeholder: '留空，每次启动自动发现安装路径', help: '支持自动发现常规安装和 Microsoft Store 安装。也可浏览并指定 Claude Desktop 的 claude.exe。' },
-  { key: 'extraarguments', ini: 'ExtraArguments', page: 'launch', label: '附加启动参数', placeholder: '例如 --lang=ja-JP', help: '原样传给 Claude Desktop。已有 --lang= 时优先使用该参数，含空格的路径参数需要加引号。' }
+  { key: 'desktopexecutable', ini: 'DesktopExecutable', page: 'launch', label: 'Claude Desktop 启动器', browse: 'file', placeholder: '留空，自动发现 Desktop', help: '支持常规安装和 Microsoft Store 安装。' },
+  { key: 'scienceexecutable', ini: 'ScienceExecutable', page: 'launch', label: 'Claude Science 启动器', browse: 'file', placeholder: '留空，自动发现 Science', help: '选择 ClaudeScience 安装目录中的 claude-science.exe。Science 使用默认桌面启动交接。' },
+  { key: 'desktoparguments', ini: 'DesktopArguments', page: 'launch', label: 'Desktop 附加启动参数', placeholder: '例如 --lang=ja-JP', help: '传给 Desktop，含空格的路径参数需要加引号。Science 桌面启动使用默认参数。' }
 ];
 
 const isMac = window.CP_PLATFORM === 'macos';
 if (isMac) {
+  const launch = fields.findIndex(field => field.page === 'launch');
+  fields.splice(launch, fields.filter(field => field.page === 'launch').length,
+    {key: 'executable', ini: 'Executable', page: 'launch', label: 'Claude Desktop 可执行文件', browse: 'file'},
+    {key: 'extraarguments', ini: 'ExtraArguments', page: 'launch', label: '附加启动参数'}
+  );
   const timezoneField = fields.find(field => field.key === 'timezone');
   timezoneField.fallback = 'America/Los_Angeles';
   timezoneField.help = '使用 IANA 时区，自动处理夏令时，例如 America/Los_Angeles、Asia/Shanghai。';
-  fields.find(field => field.key === 'locale').help = '设置 LANG/LC_ALL、Claude 的 --lang 和主程序 Apple 语言参数；原生子进程的语言区域未完全覆盖。';
+  fields.find(field => field.key === 'locale').help = 'BCP-47 区域代码，用于语言与区域设置，并自动传入 Claude 的 --lang 参数。从下拉列表选择常用语言与区域。';
   for (const key of ['verifyinjection', 'verifygraceseconds']) {
     fields.splice(fields.findIndex(field => field.key === key), 1);
   }
-  fields.find(field => field.key === 'preflight').help = '仅检查启动器环境的时区、UTF-8 区域和冬夏令时，不代表 Claude 页面和全部子进程已验证。';
   const advanced = fields.findIndex(field => field.page === 'advanced');
   const count = fields.filter(field => field.page === 'advanced').length;
   fields.splice(advanced, count,
@@ -179,7 +184,7 @@ function buildForm(timezones) {
     help.textContent = field.help || '';
     help.hidden = !field.help;
     const row = document.createElement('div');
-    row.className = `input-row${field.browse || field.key === 'extraarguments' ? ' wide' : ''}`;
+    row.className = `input-row${field.browse || field.key === 'desktoparguments' ? ' wide' : ''}`;
     const options = field.type === 'timezone' ? timezones.map(zone => [zone.id, zone.label]) : field.options;
     const input = document.createElement(options ? 'select' : 'input');
     input.id = `field-${field.key}`;
@@ -225,6 +230,11 @@ function buildForm(timezones) {
 }
 
 function applyValues(loaded) {
+  const selected = (loaded.application || 'desktop').toLowerCase();
+  loaded = { ...loaded };
+  loaded.desktopexecutable ??= selected === 'desktop' ? loaded.executable || '' : '';
+  loaded.scienceexecutable ??= selected === 'science' ? loaded.executable || '' : '';
+  loaded.desktoparguments ??= selected === 'desktop' ? loaded.extraarguments || '' : '';
   baseline = {};
   for (const field of fields) {
     let value = Object.hasOwn(loaded, field.key) ? loaded[field.key] : field.fallback || '';
@@ -258,25 +268,30 @@ function updateStatus(next) {
   $('status-pill').textContent = busy ? '处理中' : next.active ? '受监管运行中' : '待机';
   $('status-pill').className = `status-pill${busy ? ' busy' : next.active ? ' active' : ''}`;
   $('session-title').textContent = busy ? next.busyLabel : next.active ? 'Claude 正在受监管运行' : next.detail ? '需要检查配置' : '准备启动';
-  $('session-description').textContent = busy ? '正在检查环境，请稍候…' : next.active ? `Job 内共有 ${next.processCount} 个进程。` : '通过下方按钮启动受监管的 Claude Desktop。';
+  $('session-description').textContent = busy ? '正在检查环境，请稍候…' : next.active ? `Job 内共有 ${next.processCount} 个进程。` : '分别启动 Desktop 和 Science，两个会话独立运行。';
   $('summary-timezone').textContent = next.timezone || '未设置';
   $('summary-locale').textContent = next.locale || '未设置';
   $('summary-verification').textContent = ({ strict: '严格验证', warn: '仅记录警告', off: '已关闭' })[next.verify] || '未设置';
   $('status-detail').textContent = next.detail || '';
   $('status-detail').hidden = !next.detail;
-  $('start').disabled = busy || next.active;
-  $('stop').disabled = busy || !next.active;
-  $('selftest').disabled = busy || next.active;
+  $('selftest').disabled = busy || (isMac && next.active);
   if (isMac) {
     $('summary-verification').previousElementSibling.textContent = '运行方式';
     $('summary-verification').textContent = '环境变量';
     const state = next.state || 'stopped';
     const labels = {preparing: '准备中', verifying: '验证中', verified: '验证通过', running: '运行中', warning: '有警告', failed: '已停止', stopped: '待机'};
     $('status-pill').textContent = busy ? '自检中' : labels[state] || '待机';
-    $('session-title').textContent = busy ? '正在进行环境自检' : next.active ? (state === 'verified' ? 'Claude 正在受监管运行' : next.busyLabel || labels[state] || 'Claude 正在运行') : state === 'failed' ? '会话已停止' : '准备启动';
-    $('session-description').textContent = (next.active ? `当前跟踪 ${next.processCount || 0} 个进程。` : '直接启动官方 Claude，使用独立资料目录。') + '原生语言区域未完全覆盖。';
-    $('stop').disabled = !next.active;
+    $('session-title').textContent = busy ? '正在进行环境自检' : next.active ? 'Claude 正在受监管运行' : state === 'failed' ? '会话已停止' : '准备启动';
+    $('session-description').textContent = next.active ? `当前跟踪 ${next.processCount || 0} 个进程。` : '通过下方按钮启动受监管的 Claude Desktop。';
     if (state === 'warning') $('status-pill').className = 'status-pill warning';
+  }
+  for (const app of sessionApplications(next)) {
+    const row = $(`session-${app.id}`);
+    if (!row) continue;
+    row.querySelector('.app-state').textContent = app.busy ? '正在预检并启动…' : app.active ? `受监管运行 · ${app.processCount} 个进程` : '未启动';
+    row.querySelector('.app-environment').textContent = `${app.timezone} · ${app.locale}`;
+    row.querySelector('[data-action=start]').disabled = busy || app.active;
+    row.querySelector('[data-action=stop]').disabled = !app.active;
   }
 }
 
@@ -318,14 +333,14 @@ async function save() {
   }
 }
 
-async function run(action) {
-  if (status.busy) return;
-  if (dirty) {
+async function run(action, application) {
+  if (action !== 'stop' && status.busy) return;
+  if (dirty && action !== 'stop') {
     const choice = await dialog('有未保存的设置', '是否先保存设置？使用已保存配置会保留当前表单中的更改。',
       [['取消', 'cancel'], ['使用已保存配置', 'previous'], ['保存并继续', 'save', true]]);
     if (choice === 'cancel' || (choice === 'save' && !await save())) return;
   }
-  try { await request(action); } catch (error) { await dialog('操作失败', error.message); }
+  try { await request(action, { application }); } catch (error) { await dialog('操作失败', error.message); }
 }
 
 window.chrome.webview.addEventListener('message', async event => {
@@ -371,27 +386,63 @@ $('reload').onclick = async () => {
   try { applyValues((await request('load')).values); toast('已重新加载设置'); }
   catch (error) { await dialog('无法加载设置', error.message); }
 };
-$('start').onclick = () => run('start');
+
 $('selftest').onclick = () => run('selftest');
-$('stop').onclick = async () => { try { await request('stop'); } catch (error) { await dialog('操作失败', error.message); } };
+
 document.addEventListener('keydown', event => {
   if ((event.ctrlKey || (isMac && event.metaKey)) && event.key.toLowerCase() === 's') { event.preventDefault(); if (dirty) save(); }
 });
+
+function sessionApplications(next) {
+  return isMac ? [{id: 'desktop', name: 'Claude Desktop', active: Boolean(next.active),
+    busy: Boolean(next.active && next.state === 'preparing'), processCount: next.processCount || 0,
+    timezone: next.timezone, locale: next.locale}] : next.applications || [];
+}
+
+function buildSessions(applications) {
+  for (const app of applications) {
+    const row = document.createElement('article');
+    row.className = 'application-session';
+    row.id = `session-${app.id}`;
+    const name = document.createElement('h3');
+    name.textContent = app.name;
+    const state = document.createElement('p');
+    state.className = 'app-state';
+    state.setAttribute('role', 'status');
+    const environment = document.createElement('p');
+    environment.className = 'app-environment';
+    const actions = document.createElement('div');
+    actions.className = 'session-actions';
+    for (const [action, label] of [['start', '启动'], ['stop', '停止']]) {
+      const button = document.createElement('button');
+      button.className = action === 'start' ? 'button primary' : 'button';
+      button.dataset.action = action;
+      button.textContent = label;
+      button.setAttribute('aria-label', `${label} ${app.name}`);
+      button.onclick = () => run(action, app.id);
+      actions.append(button);
+    }
+    row.append(name, state, environment, actions);
+    $('application-sessions').append(row);
+  }
+}
 
 async function initialize() {
   try {
     const result = await request('load');
     buildForm(result.timezones);
     applyValues(result.values);
+    buildSessions(sessionApplications(result.status));
     updateStatus(result.status);
     showPage(result.page || 'general');
     showView(result.view || 'overview');
     $('loading').hidden = true;
     if (isMac) {
       document.documentElement.dataset.platform = 'macos';
+      document.querySelector('.eyebrow').textContent = 'Claude Desktop';
       document.querySelector('.quiet-note').textContent = '关闭窗口后继续运行。点击 Dock 或菜单栏中的 ClaudeProtect 图标可重新打开控制面板。';
-      document.querySelector('.info-grid .info-card:first-child h3').textContent = '启动环境与语言参数';
-      document.querySelector('.info-grid .info-card:first-child p').textContent = '直接启动官方 Claude，设置时区、UTF-8 区域和主程序语言参数。原生子进程语言区域未完全覆盖。';
+      document.querySelector('.info-grid .info-card:first-child h3').textContent = '进程内时区与语言';
+      document.querySelector('.info-grid .info-card:first-child p').textContent = '设置用于 Claude 及其受监管子进程。具体功能可在项目 README 中查看。';
       document.querySelector('.info-grid .info-card:last-child p').textContent = '停止会话或退出 ClaudeProtect 时，会清理本次启动并跟踪到的 Claude 及其子进程。';
     }
   } catch (error) { $('loading').textContent = `加载失败，${error.message}`; }

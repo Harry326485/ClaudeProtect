@@ -71,6 +71,9 @@ std::vector<wchar_t> buildChildEnvironment(
             auto equals = entry.find(L'=');
             if (equals == std::wstring::npos) continue;
             auto key = lower(entry.substr(0, equals));
+            if (std::any_of(extra.begin(), extra.end(), [&](const auto& item) {
+                    return key == lower(item.first);
+                })) continue;
             if (key == L"tz" || key == L"lang" || key == L"lc_all" || key == L"language" ||
                 key == L"lc_messages" || key.rfind(L"cp_", 0) == 0 ||
                 key.rfind(L"claude_protect_", 0) == 0)
@@ -343,8 +346,19 @@ bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& 
         error = L"Executable not found: " + spec.executable;
         return false;
     }
+    auto imagePath = lower(spec.executable);
+    std::replace(imagePath.begin(), imagePath.end(), L'/', L'\\');
+    if (spec.claudeScience && imagePath.find(L"\\.claude-science\\electron\\") != imagePath.npos) {
+        error = L"请选择 ClaudeScience 安装目录中的稳定启动器，Electron 运行时需要由启动器加载。";
+        return false;
+    }
+    if (spec.claudeScience && !spec.arguments.empty()) {
+        error = L"Science 桌面窗口的启动交接要求使用默认 serve 参数，请清空附加启动参数。";
+        return false;
+    }
 
     config_ = config;
+    science_ = spec.claudeScience;
     targetDirectory_ = lower(directory(spec.executable));
     failure_.clear();
     mainVerified_ = false;
@@ -359,20 +373,20 @@ bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& 
     lastLogScanTick_ = 0;
 
     std::wstring warning;
-    if (spec.claudeDesktop) {
+    if (spec.claudeDesktop || spec.claudeScience) {
+        auto application = spec.claudeScience ? L"science" : L"desktop";
         DWORD unmanagedPid = 0;
         std::wstring unmanagedPath, lookupWarning;
-        if (findUnmanagedClaudeDesktop(spec.executable, unmanagedPid, unmanagedPath, lookupWarning)) {
-            error = L"An unmanaged Claude Desktop is already running (pid " +
+        if (findUnmanagedApplication(application, spec.executable, unmanagedPid, unmanagedPath, lookupWarning)) {
+            error = L"An unmanaged " + applicationName(application) + L" is already running (pid " +
                     std::to_wstring(unmanagedPid) + L", " + unmanagedPath +
                     L"). Quit it before starting a managed session; Electron single-instance "
                     L"forwarding would bypass supervision.";
             return false;
         }
         if (!lookupWarning.empty()) {
-            error = L"Cannot verify that no unmanaged Claude Desktop is running: " + lookupWarning +
-                    L" Quit any Claude Desktop/Claude Code instances running at a different "
-                    L"integrity level, or run ClaudeProtect at the same integrity level.";
+            error = L"Cannot inspect running " + applicationName(application) + L" processes: " +
+                    lookupWarning + L" Run ClaudeProtect at the same integrity level.";
             return false;
         }
     }
@@ -404,12 +418,20 @@ bool Session::start(const Config& config, const LaunchSpec& spec, std::wstring& 
     if (!createJob(job, error)) return false;
 
     std::wstring launchArguments = spec.arguments;
+    if (spec.claudeScience) {
+        launchArguments = L"serve";
+    }
     if (spec.claudeDesktop && lower(launchArguments).find(L"--lang=") == std::wstring::npos) {
         if (!launchArguments.empty()) launchArguments += L" ";
         launchArguments += L"--lang=" + config_.locale;
     }
 
-    auto environment = buildChildEnvironment(config_, {});
+    // Science's Windows desktop handoff admits an exact `serve` child whose
+    // parent matches this PID. Plain CLI `serve` starts only the web daemon.
+    std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides;
+    if (spec.claudeScience)
+        environmentOverrides.emplace_back(L"OPERON_WIN_DESKTOP_LAUNCH", std::to_wstring(GetCurrentProcessId()));
+    auto environment = buildChildEnvironment(config_, environmentOverrides);
     std::wstring command = commandLine(spec.executable, launchArguments);
     std::wstring workingDirectory = directory(spec.executable);
     if (workingDirectory.empty()) workingDirectory = config_.baseDir;
@@ -529,6 +551,7 @@ bool Session::hasLepLog(DWORD pid) {
 }
 
 bool Session::isManagedImagePath(const std::wstring& path) const {
+    if (science_ && isClaudeSciencePath(path)) return true;
     if (targetDirectory_.empty()) return true;
     std::wstring lowerPath = lower(path);
     if (lowerPath.size() < targetDirectory_.size() ||

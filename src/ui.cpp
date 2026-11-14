@@ -92,7 +92,14 @@ void send(Panel& panel, const Json& message) {
 
 Object statusData(Panel& panel) {
     auto status = panel.actions.status();
-    return {{"active", Json(status.active)}, {"busy", Json(status.busy)},
+    Array applications;
+    for (const auto& app : status.applications) {
+        applications.push_back(Json(Object{{"id", Json(utf8(app.id))}, {"name", Json(utf8(app.name))},
+            {"active", Json(app.active)}, {"busy", Json(app.busy)},
+            {"processCount", Json((double)app.processCount)}, {"timezone", Json(utf8(app.timezone))},
+            {"locale", Json(utf8(app.locale))}, {"verify", Json(utf8(app.verify))}}));
+    }
+    return {{"applications", Json(applications)}, {"active", Json(status.active)}, {"busy", Json(status.busy)},
             {"busyLabel", Json(utf8(status.busyLabel))}, {"processCount", Json((double)status.processCount)},
             {"timezone", Json(utf8(status.timezone))}, {"locale", Json(utf8(status.locale))},
             {"verify", Json(utf8(status.verify))}, {"detail", Json(utf8(status.detail))}};
@@ -136,9 +143,9 @@ std::wstring browse(Panel& panel, std::wstring& error) {
     dialog->GetOptions(&options);
     dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST |
                        FOS_FILEMUSTEXIST);
-    dialog->SetTitle(L"选择 Claude Desktop");
+    dialog->SetTitle(L"选择 Claude Desktop 或 Claude Science");
     {
-        const COMDLG_FILTERSPEC filters[] = {{L"Claude Desktop (claude.exe)", L"claude.exe"},
+        const COMDLG_FILTERSPEC filters[] = {{L"Claude (claude.exe / claude-science.exe)", L"claude.exe;claude-science.exe"},
                                              {L"可执行文件 (*.exe)", L"*.exe"}};
         dialog->SetFileTypes(2, filters);
     }
@@ -247,7 +254,7 @@ void handleMessage(Panel& panel, const Json& message) {
         if (error.empty()) {
             panel.ready = true;
             panel.dirty = false;
-            panel.actions.command(UiCommand::Reload);
+            panel.actions.command(UiCommand::Reload, L"");
             result["status"] = Json(statusData(panel));
             auto target = navigation(panel.page);
             result.insert(target.begin(), target.end());
@@ -258,8 +265,8 @@ void handleMessage(Panel& panel, const Json& message) {
         const auto& input = message.get("values");
         const char* keys[] = {"timezone", "locale",
             "verifyinjection", "verifygraceseconds", "preflight", "ansicodepage", "oemcodepage",
-            "fontcharset", "registryredirectionmode", "hookuilanguagemode", "executable",
-            "extraarguments"};
+            "fontcharset", "registryredirectionmode", "hookuilanguagemode", "desktopexecutable",
+            "scienceexecutable", "desktoparguments"};
         SettingsValues values;
         if (!input.is<Object>()) error = L"设置表单无效，请重新加载后再试。";
         for (const auto key : keys) {
@@ -274,17 +281,23 @@ void handleMessage(Panel& panel, const Json& message) {
         if (error.empty() && saveSettings(panel.baseDir, values, panel.source, error)) {
             result["values"] = Json(settingsData(panel, error));
             panel.dirty = false;
-            panel.actions.command(UiCommand::Reload);
+            panel.actions.command(UiCommand::Reload, L"");
         }
     } else if (action == "browse") {
         auto key = stringValue(message, "key");
-        if (key != "executable") error = L"路径设置无效。";
+        if (key != "desktopexecutable" && key != "scienceexecutable") error = L"路径设置无效。";
         else result["path"] = Json(utf8(browse(panel, error)));
     } else if (action == "start" || action == "stop" || action == "selftest") {
         auto status = panel.actions.status();
-        if (status.busy) error = L"已有操作正在进行，请稍候。";
-        else if (action != "stop" && status.active) error = L"请先停止当前会话。";
-        else panel.actions.command(action == "start" ? UiCommand::Start : action == "stop" ? UiCommand::Stop : UiCommand::SelfTest);
+        auto application = stringValue(message, "application");
+        auto selected = std::find_if(status.applications.begin(), status.applications.end(),
+            [&](const auto& app) { return utf8(app.id) == application; });
+        if (action != "selftest" && selected == status.applications.end())
+            error = L"请选择 Desktop 或 Science。";
+        else if (action != "stop" && status.busy) error = L"已有启动或自检正在进行，请稍候。";
+        else if (action == "start" && selected->active) error = L"该应用已受监管运行。";
+        else panel.actions.command(action == "start" ? UiCommand::Start :
+            action == "stop" ? UiCommand::Stop : UiCommand::SelfTest, widen(application));
     } else if (action == "close") {
         PostMessageW(panel.window, ClosePanel, 0, 0);
     } else {

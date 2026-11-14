@@ -71,6 +71,48 @@ int wmain(int argc, wchar_t** argv) {
     require(readConfigText(ini, text, error) && text == after, "invalid form leaves file intact");
     values[L"timezone"] = L"UTC\r\nLocale=ja-JP";
     require(!saveSettings(base, values, source, error), "reject line injection from form");
-    puts("Settings validation, atomic save, Unicode, LA defaults and POSIX TZ rules passed.");
+    require(cfg.application == L"desktop", "legacy configuration defaults to Desktop");
+    require(!saveConfigText(base, L"[ClaudeProtect]\r\nApplication=unknown\r\n", error),
+            "invalid application rejected");
+    require(saveConfigText(base, L"[ClaudeProtect]\r\nApplication=science\r\n", error) &&
+            loadConfig(base, cfg, error) && prepareConfig(cfg, error) && cfg.application == L"science",
+            "Science config and automatic discovery");
+    require(loadSettings(base, values, source, error), "load Science settings form");
+    values[L"application"] = L"science";
+    require(saveSettings(base, values, source, error) && loadConfig(base, cfg, error) &&
+            cfg.application == L"science", "Science application form round trip");
+    require(!saveConfigText(base, L"[ClaudeProtect]\r\nApplication=science\r\nExtraArguments=--detached\r\n", error),
+            "Science desktop handoff rejects non-default arguments");
+    require(isClaudeSciencePath(L"C:/Users/Test/AppData/Local/Programs/ClaudeScience/claude-science.exe"),
+            "Science stable launcher recognized");
+    require(isClaudeSciencePath(L"C:\\Users\\Test\\.claude-science\\electron\\42.10.0\\claude-science.exe"),
+            "Science Electron child recognized across directories");
+    require(!isClaudeSciencePath(L"C:\\tools\\claude-science.exe") &&
+            !isClaudeSciencePath(L"C:\\Users\\Test\\.claude-science\\electron-other\\claude-science.exe"),
+            "unrelated Science names excluded");
+    require(!isClaudeDesktopPath(L"C:\\Users\\Test\\AppData\\Local\\Programs\\ClaudeScience\\claude-science.exe", L""),
+            "Science does not block Desktop");
+    require(!isClaudeSciencePath(L"C:\\Program Files\\WindowsApps\\Claude_4.29.0.0_x64__test\\app\\claude.exe"),
+            "Desktop does not block Science");
+    require(!isClaudeDesktopPath(L"C:\\Users\\Test\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\claude.exe", L""),
+            "Claude Code remains excluded");
+    require(saveConfigText(base, L"[ClaudeProtect]\r\nApplication=science\r\n"
+        L"Executable=C:\\legacy\\claude-science.exe\r\n"
+        L"DesktopExecutable=C:\\custom\\desktop.exe\r\n"
+        L"ScienceExecutable=C:\\custom\\claude-science.exe\r\n"
+        L"DesktopArguments=--example\r\n", error), "dual application configuration");
+    Config desktop, science;
+    require(loadApplicationConfig(base, L"desktop", desktop, error) &&
+            loadApplicationConfig(base, L"science", science, error), "resolve both application configurations");
+    require(desktop.executable == L"C:\\custom\\desktop.exe" && desktop.extraArguments == L"--example" &&
+            science.executable == L"C:\\custom\\claude-science.exe" && science.extraArguments.empty(),
+            "independent paths and Desktop arguments override legacy selection");
+    require(desktop.timezoneId == science.timezoneId && desktop.locale == science.locale,
+            "both applications share environment settings");
+    require(saveConfigText(base, L"[ClaudeProtect]\r\nApplication=science\r\n"
+        L"Executable=C:\\legacy\\claude-science.exe\r\n", error) &&
+        loadApplicationConfig(base, L"science", science, error) &&
+        science.executable == L"C:\\legacy\\claude-science.exe", "legacy Science path migration");
+    puts("Settings validation, legacy migration and dual application paths passed.");
     return 0;
 }

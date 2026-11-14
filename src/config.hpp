@@ -18,7 +18,9 @@ struct Config {
     std::wstring lepDir; // Fixed to baseDir/lep; INI overrides are ignored.
     std::wstring probePath;
 
+    std::wstring application = L"desktop"; // desktop | science
     std::wstring executable;
+    std::wstring desktopExecutable, scienceExecutable, desktopArguments;
     std::wstring timezoneId;   // Windows time zone ID required by LEP.
     std::wstring timezoneIana; // Diagnostic IANA name derived automatically from timezoneId.
     std::wstring timezonePosix; // Derived POSIX TZ for tools without an IANA database.
@@ -45,6 +47,8 @@ struct Config {
 // ClaudeProtect.ini when present and fills defaults otherwise. Resolution and
 // validation of time zone, locale and modes happens in prepareConfig.
 bool loadConfig(const std::wstring& baseDir, Config& config, std::wstring& error);
+bool loadApplicationConfig(const std::wstring& baseDir, const std::wstring& application,
+                           Config& config, std::wstring& error);
 bool writeDefaultConfig(const std::wstring& iniPath, const std::wstring& executable,
                         std::wstring& error);
 bool readConfigText(const std::wstring& path, std::wstring& text, std::wstring& error);
@@ -73,6 +77,12 @@ std::wstring mapWindowsTimeZoneToPosix(const std::wstring& id);
 // Sorted newest-first. Only Claude Desktop executables are returned; Claude
 // Code installations such as npm's claude.exe are excluded.
 std::vector<std::wstring> discoverClaudeExecutables();
+std::vector<std::wstring> discoverScienceExecutables();
+std::vector<std::wstring> discoverApplicationExecutables(const std::wstring& application);
+bool isClaudeSciencePath(const std::wstring& path);
+std::wstring applicationName(const std::wstring& application);
+bool findUnmanagedApplication(const std::wstring& application, const std::wstring& target,
+                              DWORD& pid, std::wstring& path, std::wstring& warning);
 bool isClaudeDesktopPath(const std::wstring& path, const std::wstring& target);
 
 // Finds a running Claude Desktop executable that is not in our managed job.
