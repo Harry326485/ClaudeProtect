@@ -1,0 +1,3 @@
+Unmodified notices from astral-sh/python-build-standalone tag 20261110.
+https://github.com/astral-sh/python-build-standalone/tree/20261110
+Includes all build-project notices; some components may not be present in this platform runtime.

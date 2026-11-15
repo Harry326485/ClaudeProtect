@@ -1,0 +1,2 @@
+# Preserve original third-party license bytes.
+runtime-licenses/* -text -whitespace
