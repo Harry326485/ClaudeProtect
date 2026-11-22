@@ -5,6 +5,7 @@ param(
     [string]$SdkVersion,
     [switch]$Test,
     [switch]$Verbose,
+    [switch]$VerboseLog,
     [switch]$DryRun
 )
 
@@ -176,6 +177,7 @@ $arguments = @(
     '--sdk-version', $sdk
 )
 if ($Verbose) { $arguments += '--verbose' }
+if (-not $VerboseLog) { $arguments += '--quiet-log' }
 if ($DryRun) { $arguments += '--dry-run' }
 
 Push-Location $lep

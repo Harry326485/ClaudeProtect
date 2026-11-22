@@ -1,10 +1,10 @@
 ClaudeProtect integration changes for LocaleEmulatorPlus-Core
 Base commit: 0b11f533ef426ab5606e12f91acd4b1c2f7e6bad
-Modified for ClaudeProtect on 2026-10-29 and 2026-11-02.
+Modified for ClaudeProtect on 2026-10-29, 2026-11-02 and 2026-11-22.
 Changes retain the applicable upstream license terms. See THIRD_PARTY_NOTICES.md.
 
 diff --git a/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp b/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
-index 2ecb069d2be4860b8a32198fed1530ea4ef3d781..a18119025f374b54c59bdc36d4a1be11ba59de19 100644
+index 2ecb069..a181190 100644
 --- a/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
 +++ b/LocaleEmulatorPlus/Hooks/Kernel32Hook.cpp
 @@ -25,6 +25,105 @@ LANGID WINAPI LepGetUserDefaultUILanguage()
@@ -190,7 +190,7 @@ index 2ecb069d2be4860b8a32198fed1530ea4ef3d781..a18119025f374b54c59bdc36d4a1be11
      return 0;
  }
 diff --git a/LocaleEmulatorPlus/Hooks/NtdllHook.cpp b/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
-index 46a533bca740c5e1e04108d8027e5714ebd0fd53..557f9f734c9e04fba0ba225494446b012883e0a1 100644
+index 46a533b..a5d03d9 100644
 --- a/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
 +++ b/LocaleEmulatorPlus/Hooks/NtdllHook.cpp
 @@ -1221,6 +1221,36 @@ LepNtQuerySystemInformation(
@@ -230,6 +230,24 @@ index 46a533bca740c5e1e04108d8027e5714ebd0fd53..557f9f734c9e04fba0ba225494446b01
              return STATUS_SUCCESS;
      }
  
+@@ -1403,7 +1433,7 @@ INJECT_FINISH_NEW:
+     if (NT_FAILED(Status) && SelfShadow != nullptr)
+         Mm::FreeVirtualMemory(SelfShadow, Process);
+ 
+-    WriteLog(L"child injection complete pid=%u status=%p payload=%u elapsed=%u",
++    WriteVerifyLog(L"child injection complete pid=%u status=%p payload=%u elapsed=%u",
+              (ULONG)(ULONG_PTR)Cid->UniqueProcess, Status, PayloadSize,
+              LepCurrentTimeMs() - StartTime);
+     return Status;
+@@ -1526,7 +1556,7 @@ LepNtCreateUserProcess(
+     Status2 = GlobalData->InjectSelfToChildProcess(*ProcessHandle, Cid, LEP_INJECT_FULL);
+ 
+     WriteLog(L"inject %p", Status2);
+-    WriteLog(L"create edge creatorPid=%u creatorTid=%u childPid=%u childTid=%u createStatus=%08X injectStatus=%08X originalSuspended=%u",
++    WriteVerifyLog(L"create edge creatorPid=%u creatorTid=%u childPid=%u childTid=%u createStatus=%08X injectStatus=%08X originalSuspended=%u",
+              (ULONG)CurrentPid(), (ULONG)CurrentTid(),
+              (ULONG)(ULONG_PTR)Cid->UniqueProcess, (ULONG)(ULONG_PTR)Cid->UniqueThread,
+              Status, Status2, !ResumeAfterInjection);
 @@ -2664,6 +2694,7 @@ LepRtlGetThreadPreferredUILanguages(
  )
  {
@@ -301,7 +319,7 @@ index 46a533bca740c5e1e04108d8027e5714ebd0fd53..557f9f734c9e04fba0ba225494446b01
      // Returning synthetic success there is unsafe: the caller subsequently
 diff --git a/LocaleEmulatorPlus/Hooks/WinrtHook.cpp b/LocaleEmulatorPlus/Hooks/WinrtHook.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8463ee265684048fd16116eb6bfe0aa42c1b8865
+index 0000000..8463ee2
 --- /dev/null
 +++ b/LocaleEmulatorPlus/Hooks/WinrtHook.cpp
 @@ -0,0 +1,165 @@
@@ -471,7 +489,7 @@ index 0000000000000000000000000000000000000000..8463ee265684048fd16116eb6bfe0aa4
 +    return STATUS_SUCCESS;
 +}
 diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp b/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
-index 94a8f74ffa55daf40c28760a890f18e434131989..c1551351023223662dea70a45ff99779c5cacaea 100644
+index 94a8f74..04aad52 100644
 --- a/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
 +++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.cpp
 @@ -194,6 +194,13 @@ NTSTATUS LepGlobalData::Initialize(PLEP_BOOTSTRAP_PAYLOAD Payload, BOOL OwnPaylo
@@ -520,8 +538,17 @@ index 94a8f74ffa55daf40c28760a890f18e434131989..c1551351023223662dea70a45ff99779
      UnHookNtdllRoutines();
  #endif
  
+@@ -919,7 +937,7 @@ BOOL Initialize(PVOID BaseAddress, PLEP_BOOTSTRAP_PAYLOAD BootstrapPayload = nul
+ 
+     WriteLog(L"GlobalData.Initialize begin");
+     Status = GlobalData->Initialize(BootstrapPayload, OwnBootstrapPayload);
+-    WriteLog(L"GlobalData.Initialize end status=%08X", Status);
++    WriteVerifyLog(L"GlobalData.Initialize end status=%08X", Status);
+     if (NT_FAILED(Status))
+     {
+ #if LEP_DIAG_INIT
 diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.h b/LocaleEmulatorPlus/LocaleEmulatorPlus.h
-index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd848462f9e 100644
+index b519149..8961a62 100644
 --- a/LocaleEmulatorPlus/LocaleEmulatorPlus.h
 +++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.h
 @@ -41,6 +41,8 @@ typedef LepGlobalData* PLepGlobalData;
@@ -533,7 +560,261 @@ index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd8
  typedef NTSTATUS (NTAPI *PLEP_GET_THREAD_PREFERRED_UI_LANGUAGES)(
      ULONG Flags,
      PULONG NumberOfLanguages,
-@@ -780,6 +782,7 @@ protected:
+@@ -591,6 +593,22 @@ inline ULONG_PTR FormatLepUIntHex4(PWSTR Buffer, ULONG_PTR Value)
+ #define ENABLE_LOG 1
+ #endif
+ 
++// ClaudeProtect: LEP_VERBOSE_LOG=0 keeps the per-process log file and the
++// verification markers but suppresses all other hook/process traces.
++#ifndef LEP_VERBOSE_LOG
++#define LEP_VERBOSE_LOG 1
++#endif
++
++// Keep at most this many log files in the Log directory. When a new log is
++// created at the limit, delete the oldest unlocked logs in one batch.
++#ifndef LEP_LOG_RETENTION_LIMIT
++#define LEP_LOG_RETENTION_LIMIT 500
++#endif
++
++#ifndef LEP_LOG_RETENTION_BATCH
++#define LEP_LOG_RETENTION_BATCH 10
++#endif
++
+ #ifndef LEP_DIAG_INPUT
+ #define LEP_DIAG_INPUT 0
+ #endif
+@@ -648,6 +666,190 @@ inline BOOLEAN LepAppendLogDirectory(PWSTR Path, ULONG_PTR Capacity, PULONG_PTR
+     return TRUE;
+ }
+ 
++struct LEP_LOG_RETENTION_RESULT
++{
++    ULONG_PTR Count;
++    ULONG_PTR Deleted;
++    BOOLEAN   Scanned;
++};
++
++struct LEP_LOG_CANDIDATE
++{
++    ULONGLONG LastWrite;
++    WCHAR     Name[MAX_PATH];
++};
++
++inline BOOLEAN LepEqualNoCase(PCWSTR Left, PCWSTR Right)
++{
++    for (;; ++Left, ++Right)
++    {
++        WCHAR A = *Left;
++        WCHAR B = *Right;
++
++        if (A >= L'A' && A <= L'Z')
++            A += L'a' - L'A';
++        if (B >= L'A' && B <= L'Z')
++            B += L'a' - L'A';
++        if (A != B)
++            return FALSE;
++        if (A == 0)
++            return TRUE;
++    }
++}
++
++inline BOOLEAN LepHasLogSuffix(PCWSTR Name)
++{
++    static const WCHAR TxtSuffix[] = L".log.txt";
++    static const WCHAR LogSuffix[] = L".log";
++    ULONG_PTR Length = StrLengthW(Name);
++
++    if (Length >= CONST_STRLEN(TxtSuffix) &&
++        LepEqualNoCase(Name + Length - CONST_STRLEN(TxtSuffix), TxtSuffix))
++        return TRUE;
++
++    if (Length >= CONST_STRLEN(LogSuffix) &&
++        LepEqualNoCase(Name + Length - CONST_STRLEN(LogSuffix), LogSuffix))
++        return TRUE;
++
++    return FALSE;
++}
++
++// Delete the oldest unlocked log files when the directory reached the limit.
++// Log files held open by live processes cannot be deleted (their writer does
++// not share FILE_SHARE_DELETE), so those are skipped and newer files are tried.
++inline LEP_LOG_RETENTION_RESULT LepTrimLogDirectory(PCWSTR TargetPath)
++{
++    LEP_LOG_RETENTION_RESULT Result = {};
++    WCHAR Directory[MAX_NTPATH];
++    WCHAR Pattern[MAX_NTPATH + 2];
++    WCHAR FullPath[MAX_NTPATH];
++    WIN32_FIND_DATAW Data;
++    ULONG_PTR DirectoryLength;
++    PCWSTR TargetName;
++    HANDLE Find;
++    ULONGLONG LowerBound = 0;
++    BOOLEAN FirstPass = TRUE;
++
++    if (TargetPath == nullptr)
++        return Result;
++
++    DirectoryLength = StrLengthW(TargetPath);
++    while (DirectoryLength != 0 && TargetPath[DirectoryLength - 1] != L'\\')
++        --DirectoryLength;
++    if (DirectoryLength == 0 || DirectoryLength + 2 > countof(Pattern) ||
++        DirectoryLength >= countof(Directory))
++        return Result;
++
++    CopyMemory(Directory, TargetPath, DirectoryLength * sizeof(WCHAR));
++    Directory[DirectoryLength] = 0;
++    TargetName = TargetPath + DirectoryLength;
++
++    CopyMemory(Pattern, Directory, DirectoryLength * sizeof(WCHAR));
++    Pattern[DirectoryLength] = L'*';
++    Pattern[DirectoryLength + 1] = 0;
++
++    Find = Nt_FindFirstFile(Pattern, &Data);
++    if (Find == INVALID_HANDLE_VALUE)
++        return Result;
++
++    Result.Scanned = TRUE;
++    do
++    {
++        if (Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
++            continue;
++        if (!LepHasLogSuffix(Data.cFileName))
++            continue;
++        if (LepEqualNoCase(Data.cFileName, TargetName))
++            continue;
++        ++Result.Count;
++    } while (Nt_FindNextFile(Find, &Data));
++    Nt_FindClose(Find);
++
++    if (Result.Count < LEP_LOG_RETENTION_LIMIT)
++        return Result;
++
++    while (Result.Deleted < LEP_LOG_RETENTION_BATCH)
++    {
++        LEP_LOG_CANDIDATE Candidates[LEP_LOG_RETENTION_BATCH];
++        ULONG_PTR Need = LEP_LOG_RETENTION_BATCH - Result.Deleted;
++        ULONG_PTR Found = 0;
++        ULONG_PTR DeletedThisPass = 0;
++        ULONG_PTR Index;
++        ULONGLONG FailedBound = 0;
++        BOOLEAN Failed = FALSE;
++
++        Find = Nt_FindFirstFile(Pattern, &Data);
++        if (Find == INVALID_HANDLE_VALUE)
++            break;
++
++        do
++        {
++            ULONGLONG LastWrite;
++            ULONG_PTR Insert;
++
++            if (Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
++                continue;
++            if (!LepHasLogSuffix(Data.cFileName))
++                continue;
++            if (LepEqualNoCase(Data.cFileName, TargetName))
++                continue;
++
++            LastWrite = ((ULONGLONG)Data.ftLastWriteTime.dwHighDateTime << 32) |
++                        Data.ftLastWriteTime.dwLowDateTime;
++            if (!FirstPass && LastWrite <= LowerBound)
++                continue;
++
++            Insert = Found;
++            while (Insert != 0 && Candidates[Insert - 1].LastWrite > LastWrite)
++                --Insert;
++            if (Insert >= Need)
++                continue;
++            if (Found < Need)
++                ++Found;
++            for (Index = Found - 1; Index > Insert; --Index)
++                Candidates[Index] = Candidates[Index - 1];
++            Candidates[Insert].LastWrite = LastWrite;
++            StrCopyW(Candidates[Insert].Name, Data.cFileName);
++        } while (Nt_FindNextFile(Find, &Data));
++        Nt_FindClose(Find);
++
++        if (Found == 0)
++            break;
++
++        for (Index = 0; Index < Found && Result.Deleted < LEP_LOG_RETENTION_BATCH; ++Index)
++        {
++            ULONG_PTR NameLength = StrLengthW(Candidates[Index].Name);
++
++            if (DirectoryLength + NameLength + 1 > countof(FullPath))
++                continue;
++
++            CopyMemory(FullPath, Directory, DirectoryLength * sizeof(WCHAR));
++            CopyMemory(FullPath + DirectoryLength, Candidates[Index].Name,
++                       (NameLength + 1) * sizeof(WCHAR));
++
++            if (NT_SUCCESS(Nt_DeleteFile(FullPath)))
++            {
++                ++Result.Deleted;
++                ++DeletedThisPass;
++            }
++            else
++            {
++                Failed = TRUE;
++                if (Candidates[Index].LastWrite > FailedBound)
++                    FailedBound = Candidates[Index].LastWrite;
++            }
++        }
++
++        FirstPass = FALSE;
++        if (Failed)
++            LowerBound = FailedBound;
++        else if (DeletedThisPass == 0)
++            break;
++    }
++
++    return Result;
++}
++
+ inline VOID InitLog(NativeFile &LogFile, PLEP_BOOTSTRAP_PAYLOAD BootstrapPayload = nullptr)
+ {
+     WCHAR LogFilePath[MAX_NTPATH];
+@@ -717,6 +919,8 @@ inline VOID InitLog(NativeFile &LogFile, PLEP_BOOTSTRAP_PAYLOAD BootstrapPayload
+     Length = ML_MIN(sizeof(LogSuffix), sizeof(LogFilePath) - Offset * sizeof(WCHAR));
+     CopyMemory(&LogFilePath[Offset], LogSuffix, Length);
+ 
++    LEP_LOG_RETENTION_RESULT Retention = LepTrimLogDirectory(LogFilePath);
++
+     static const WCHAR DosDevicesPrefix[] = L"\\??\\";
+     CopyMemory(NtLogFilePath, DosDevicesPrefix, sizeof(DosDevicesPrefix) - sizeof(WCHAR));
+     RtlInitUnicodeString(&NtLogFileName, LogFilePath);
+@@ -752,14 +956,29 @@ inline VOID InitLog(NativeFile &LogFile, PLEP_BOOTSTRAP_PAYLOAD BootstrapPayload
+     proc.ImageFileName = Target->FullDllName;
+     LogFile.Write(proc.ImageFileName.Buffer, proc.ImageFileName.Length);
+     LogFile.Write((PVOID)L"\r\n", 4);
++
++    if (!Retention.Scanned ||
++        (Retention.Count >= LEP_LOG_RETENTION_LIMIT && Retention.Deleted == 0))
++    {
++        LogFile.Print(NULL,
++                      L"log retention error: unable to delete old log files count=%u deleted=%u\r\n",
++                      (ULONG)Retention.Count, (ULONG)Retention.Deleted);
++    }
+ }
+ 
+-#define WriteLog(...) { if (LepGetGlobalData() != nullptr && LepGetGlobalData()->LogFile) LepGetGlobalData()->LogFile.Print(NULL, __VA_ARGS__), LepGetGlobalData()->LogFile.Print(NULL, L"\r\n"); }
++#define WriteVerifyLog(...) { if (LepGetGlobalData() != nullptr && LepGetGlobalData()->LogFile) LepGetGlobalData()->LogFile.Print(NULL, __VA_ARGS__), LepGetGlobalData()->LogFile.Print(NULL, L"\r\n"); }
++
++#if LEP_VERBOSE_LOG
++#define WriteLog(...) WriteVerifyLog(__VA_ARGS__)
++#else
++#define WriteLog(...)
++#endif
+ 
+ #else
+ 
+ inline VOID InitLog(...) {}
+ 
++#define WriteVerifyLog(...)
+ #define WriteLog(...)
+ 
+ #endif // ENABLE_LOG
+@@ -780,6 +999,7 @@ protected:
  public:
      PVOID CodePageMapView;
      ULONG_PTR AnsiCodePageOffset, OemCodePageOffset, UnicodeCaseTableOffset;
@@ -541,7 +822,7 @@ index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd8
  
  protected:
      PVOID DllNotificationCookie;
-@@ -806,6 +809,12 @@ public:
+@@ -806,6 +1026,12 @@ public:
          API_POINTER(RtlCustomCPToUnicodeN)      StubRtlCustomCPToUnicodeN;
          PLEP_GET_DEFAULT_UI_LANGUAGE            StubGetSystemDefaultUILanguage;
          PLEP_GET_DEFAULT_UI_LANGUAGE            StubGetUserDefaultUILanguage;
@@ -554,7 +835,7 @@ index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd8
          API_POINTER(NtUserMessageCall)          StubNtUserMessageCall;
          API_POINTER(NtUserDefSetText)           StubNtUserDefSetText;
          PVOID                                   StubGetDpiServerInfoForCurrentThread;
-@@ -1006,6 +1015,8 @@ public:
+@@ -1006,6 +1232,8 @@ public:
  
      NTSTATUS HookKernel32Routines(PVOID Kernel32);
      NTSTATUS UnHookKernel32Routines();
@@ -563,8 +844,27 @@ index b5191497d34e69bb71f51c4570fe53b8004b1a25..5f57ef86b37f317c0bac68def9fd0dd8
  
      NTSTATUS
      LookupRegistryRedirectionEntry(
+@@ -1242,7 +1470,7 @@ VOID LepSyncNtdllNlsGlobals(USHORT AnsiCodePage, BOOLEAN AnsiDbcsCodePage, BOOLE
+ // directly, without assuming a terminating NUL or allocating in the hook.
+ inline VOID LepLogUnicodeString(PCWSTR Label, const UNICODE_STRING& Value)
+ {
+-#if ENABLE_LOG
++#if ENABLE_LOG && LEP_VERBOSE_LOG
+     PLepGlobalData Data = LepGetGlobalData();
+     if (Data == nullptr || !Data->LogFile)
+         return;
+@@ -1250,6 +1478,9 @@ inline VOID LepLogUnicodeString(PCWSTR Label, const UNICODE_STRING& Value)
+     if (Value.Buffer != nullptr && Value.Length != 0)
+         Data->LogFile.Write(Value.Buffer, Value.Length);
+     Data->LogFile.Write((PVOID)L"\r\n", 2 * sizeof(WCHAR));
++#else
++    (void)Label;
++    (void)Value;
+ #endif
+ }
+ 
 diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
-index f24d155c5fe4c81f3bbe718f4d888a6aa4c78228..b82f747f313bffd78259af847b181d5ff9ad9a25 100644
+index f24d155..b82f747 100644
 --- a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
 +++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj
 @@ -24,6 +24,7 @@
@@ -576,7 +876,7 @@ index f24d155c5fe4c81f3bbe718f4d888a6aa4c78228..b82f747f313bffd78259af847b181d5f
      <ClCompile Include="Hooks\User32Hook.cpp" />
      <ClCompile Include="LocaleEmulatorPlus.cpp" />
 diff --git a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
-index 93caba443ee5cf9d0c7799a002c2301b58130e95..09f6bb9a7c1df6ce4e86a67c197e615d8f37d96a 100644
+index 93caba4..09f6bb9 100644
 --- a/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
 +++ b/LocaleEmulatorPlus/LocaleEmulatorPlus.vcxproj.filters
 @@ -47,6 +47,9 @@
@@ -590,7 +890,7 @@ index 93caba443ee5cf9d0c7799a002c2301b58130e95..09f6bb9a7c1df6ce4e86a67c197e615d
        <Filter>Hooks</Filter>
      </ClCompile>
 diff --git a/LocaleEmulatorPlus/support/native/Runtime.h b/LocaleEmulatorPlus/support/native/Runtime.h
-index 18651066ddc72125abbdff95c42a5c4f07b78cf1..fb8c8ca8ee47feee7ecf0c7ba17cb773902c53de 100644
+index 1865106..fb8c8ca 100644
 --- a/LocaleEmulatorPlus/support/native/Runtime.h
 +++ b/LocaleEmulatorPlus/support/native/Runtime.h
 @@ -251,6 +251,15 @@ typedef struct _RTL_TIME_ZONE_INFORMATION {
@@ -611,10 +911,10 @@ index 18651066ddc72125abbdff95c42a5c4f07b78cf1..fb8c8ca8ee47feee7ecf0c7ba17cb773
  NTAPI
 diff --git a/ai-docs/2026-10-29-claude-protect-integration.md b/ai-docs/2026-10-29-claude-protect-integration.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..baa0a50e7aa6d254c20ac3c5476f95a2708709a8
+index 0000000..c76c124
 --- /dev/null
 +++ b/ai-docs/2026-10-29-claude-protect-integration.md
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,53 @@
 +# ClaudeProtect integration changes (2026-10-29)
 +
 +These changes were made while integrating Core with ClaudeProtect. Public LEPB v4 and `LEP_RUNTIME_ENVIRONMENT` layouts are unchanged.
@@ -635,6 +935,23 @@ index 0000000000000000000000000000000000000000..baa0a50e7aa6d254c20ac3c5476f95a2
 +- `support/native/Runtime.h`
 +  - Add `RTL_DYNAMIC_TIME_ZONE_INFORMATION` with a 432-byte layout assertion.
 +
++## Quiet logging and retention (2026-11-22)
++
++Claude Desktop/Science spawns many short-lived child processes while running as an agent. The per-process LEP log previously recorded initialization stages, hook installation, resource traces and full command lines for every spawn, growing the log directory to tens of thousands of files.
++
++ClaudeProtect builds LEP with `--quiet-log` (`LEP_VERBOSE_LOG=0`). In this mode:
++
++- `WriteLog` is compiled out; `WriteVerifyLog` still writes the three markers the supervisor and probe parse:
++  - `GlobalData.Initialize end status=%08X`
++  - `child injection complete pid=%u status=%p ...`
++  - `create edge ... injectStatus=%08X ...`
++- `LepLogUnicodeString` (command-line/image dumps) is compiled out.
++- `InitLog` still creates the per-process file and writes the BOM plus image path, because `hasLepLog` matches the PID in the filename.
++
++`InitLog` also enforces a 500-file retention limit (`LEP_LOG_RETENTION_LIMIT`). When a new log is created and the directory already holds 500 log files, it deletes up to 10 (`LEP_LOG_RETENTION_BATCH`) oldest files. Files held open by live processes cannot be deleted because the writer does not share `FILE_SHARE_DELETE`; those are skipped and newer files are tried. If no file can be deleted, the new log records `log retention error: ...`.
++
++Upstream builds keep `LEP_VERBOSE_LOG=1`; `build-lep.ps1 -VerboseLog` restores full logging for diagnostics.
++
 +## Why
 +
 +Chromium/Electron and ICU use `GetDynamicTimeZoneInformation`, which was not virtualized by the `SystemCurrentTimeZoneInformation` case. Chromium language/navigator behavior required both the Win32 UI-language exports and `--lang`; preferred-language queries otherwise returned the host list. `GetACP`/`GetOEMCP` returned host values despite PEB/ntdll synchronization in the tested build.
@@ -653,7 +970,7 @@ index 0000000000000000000000000000000000000000..baa0a50e7aa6d254c20ac3c5476f95a2
 +- `GetSystemDefaultLocaleName`/system LCID are not changed.
 diff --git a/ai-docs/claude-language-virtualization.md b/ai-docs/claude-language-virtualization.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d8daa7234b7be2aafbf5759348e8f7a58f55667
+index 0000000..1d8daa7
 --- /dev/null
 +++ b/ai-docs/claude-language-virtualization.md
 @@ -0,0 +1,11 @@
@@ -669,7 +986,7 @@ index 0000000000000000000000000000000000000000..1d8daa7234b7be2aafbf5759348e8f7a
 +
 +ClaudeProtect's independent probe covers the same WinRT Size/GetAt path as Electron, plus IndexOf, GetMany, bounds and HSTRING ownership, for parent and child processes. Matching x86 and x64 loaders pass en-US; x64 also passes ja-JP. These probe results are not direct evidence of Claude's rendered interface or a guarantee about an application's saved language override.
 diff --git a/build.py b/build.py
-index 37ddaf635dbc6f9dbc76d752deef9e01bbccfc40..5c8873fac178bb91f4ba1c96ff1b7e5be3831075 100644
+index 37ddaf6..8a25b48 100644
 --- a/build.py
 +++ b/build.py
 @@ -20,6 +20,7 @@ CORE_SOURCES = (
@@ -680,7 +997,24 @@ index 37ddaf635dbc6f9dbc76d752deef9e01bbccfc40..5c8873fac178bb91f4ba1c96ff1b7e5b
      "Hooks/NtdllHook.cpp",
      "Hooks/User32Hook.cpp",
      "LocaleEmulatorPlus.cpp",
-@@ -81,7 +82,7 @@ class BuildConfig:
+@@ -45,6 +46,8 @@ def parse_options(argv: list[str] | None = None) -> argparse.Namespace:
+                         default=os.environ.get("SDK_ROOT") or r"C:\Program Files (x86)\Windows Kits\10")
+     parser.add_argument("--sdk-version", default=os.environ.get("SDK_VER") or "10.0.26100.0")
+     parser.add_argument("--no-log", action="store_true", help="disable logging")
++    parser.add_argument("--quiet-log", action="store_true",
++                        help="keep verification markers only; suppress verbose LEP logs")
+     parser.add_argument("--diag-init", action="store_true", help="show initialization diagnostic dialogs")
+     parser.add_argument("--diag-input", action="store_true", help="enable PID-armed input diagnostics in existing hooks")
+     parser.add_argument("--deploy-dir", type=Path,
+@@ -64,6 +67,7 @@ class BuildConfig:
+     sdk_version: str
+     log_enabled: bool
+     deploy_dir: Path | None
++    quiet_log: bool = False
+     diag_init: bool = False
+     diag_input: bool = False
+     dry_run: bool = False
+@@ -81,7 +85,7 @@ class BuildConfig:
          """Check every selected toolchain before producing partial output."""
          files = [self.linker, self.sdk_include / "um/winnt.h"]
          directories = [self.vc_tools / "include"]
@@ -689,7 +1023,16 @@ index 37ddaf635dbc6f9dbc76d752deef9e01bbccfc40..5c8873fac178bb91f4ba1c96ff1b7e5b
          for arch in architectures:
              host = self.vc_tools / "bin/Hostx64" / arch
              files += [host / "cl.exe", host / "lib.exe"]
-@@ -118,7 +119,7 @@ class NativeBuild:
+@@ -112,13 +116,15 @@ class NativeBuild:
+         self.compiler_flags = [
+             "/nologo", "/utf-8", "/c", "/O2", "/Ob1", "/GF", "/Gy", "/GR-", "/EHs-c-", "/GS-",
+             *(["/Gr", "/arch:SSE", "/DWIN32"] if arch == "x86" else ["/DWIN64", "/D_WIN64"]),
+-            "/DNDEBUG", f"/DENABLE_LOG={int(config.log_enabled)}", f"/DLEP_DIAG_INIT={int(config.diag_init)}",
++            "/DNDEBUG", f"/DENABLE_LOG={int(config.log_enabled)}",
++            f"/DLEP_VERBOSE_LOG={int(not config.quiet_log)}",
++            f"/DLEP_DIAG_INIT={int(config.diag_init)}",
+             f"/DLEP_DIAG_INPUT={int(config.diag_input)}",
+             "/D_NO_CRT_STDIO_INLINE", "/Zc:wchar_t",
          ]
          self.includes = [f"/I{path}" for path in (
              self.core, config.vc_tools / "include",
@@ -698,3 +1041,47 @@ index 37ddaf635dbc6f9dbc76d752deef9e01bbccfc40..5c8873fac178bb91f4ba1c96ff1b7e5b
          )]
          self.library_paths = [f"/libpath:{path}" for path in (
              config.sdk_root / "Lib" / config.sdk_version / "um" / arch,
+@@ -245,8 +251,9 @@ class NativeBuild:
+ 
+ def main(argv: list[str] | None = None) -> int:
+     options = parse_options(argv)
+-    if options.diag_input and options.no_log:
+-        print("--diag-input requires logging; remove --no-log.", file=sys.stderr)
++    if options.diag_input and (options.no_log or options.quiet_log):
++        print("--diag-input requires verbose logging; remove --no-log/--quiet-log.",
++              file=sys.stderr)
+         return 2
+     if os.name != "nt":
+         print("This build requires Windows and MSVC.", file=sys.stderr)
+@@ -257,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
+             vc_tools=options.vs_root.resolve() / "VC/Tools/MSVC" / options.msvc_version,
+             sdk_root=options.sdk_root.resolve(), sdk_version=options.sdk_version,
+             log_enabled=not options.no_log,
++            quiet_log=options.quiet_log,
+             diag_init=options.diag_init,
+             diag_input=options.diag_input,
+             deploy_dir=None if options.no_deploy else options.deploy_dir.resolve(),
+diff --git a/tests/test_build.py b/tests/test_build.py
+index eea1bad..dfcb312 100644
+--- a/tests/test_build.py
++++ b/tests/test_build.py
+@@ -93,6 +93,19 @@ class BuildTests(unittest.TestCase):
+         self.assertEqual([flag for flag in flags if flag.startswith('/DENABLE_LOG=')], ['/DENABLE_LOG=0'])
+         self.assertIn('/DLEP_DIAG_INIT=1', flags)
+ 
++    def test_quiet_log_flag_keeps_verification_markers_only(self):
++        with patch.object(build.BuildConfig, "preflight"), patch.object(build, "NativeBuild") as driver:
++            self.assertEqual(build.main(["x64", "--no-deploy", "--quiet-log"]), 0)
++        config = driver.call_args.args[0]
++        self.assertTrue(config.quiet_log)
++        flags = build.NativeBuild(config, "x64").compiler_flags
++        self.assertIn('/DLEP_VERBOSE_LOG=0', flags)
++        self.assertIn('/DENABLE_LOG=1', flags)
++
++    def test_diag_input_rejects_quiet_log(self):
++        with redirect_stderr(io.StringIO()):
++            self.assertEqual(build.main(["x64", "--no-deploy", "--quiet-log", "--diag-input"]), 2)
++
+     def test_cli_paths_override_legacy_environment(self):
+         with patch.dict(os.environ, {"VS_ROOT": "old vs", "SDK_VER": "old sdk"}):
+             options = build.parse_options(["X86", "--vs-root", "new vs", "--sdk-version", "new sdk"])

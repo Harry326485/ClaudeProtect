@@ -4,6 +4,12 @@
 
 `claude-protect.patch` 保存 ClaudeProtect 所需的全部 LEP 本地改动，包括新增源文件和集成说明。补丁内的修改日期分别记录在集成说明中，主要改动覆盖动态时区、ACP/OEMCP、UI/首选语言、线程语言和 WinRT 语言接口，包含相应构建输入。公共 LEPB v4 布局保持一致。
 
+## 日志
+
+`build-lep.ps1` 默认传入 `--quiet-log`（`LEP_VERBOSE_LOG=0`）：每个进程日志只保留守护进程校验所需的三条标记（`GlobalData.Initialize end status=`、`create edge`、`child injection complete`），不再写初始化阶段、钩子、资源追踪和完整命令行。需要完整日志诊断时使用 `build-lep.ps1 -VerboseLog`。
+
+日志目录最多保留最近 500 个日志文件（`LEP_LOG_RETENTION_LIMIT`）。创建新日志时如果目录已达上限，会删除最多 10 个最旧且未被占用的日志（`LEP_LOG_RETENTION_BATCH`）；被活动进程占用的文件会跳过，一个都无法删除时在新日志中写入 `log retention error:`。
+
 ## 应用
 
 ```powershell
